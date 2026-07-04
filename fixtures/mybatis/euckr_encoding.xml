@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="EUC-KR"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <!-- 위젯 목록 조회: 그룹코드로 검색 -->
+  <select id="selectWidgetByGroup" parameterType="map" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name
+    FROM demo_widget
+    WHERE group_code = #{groupCode}
+  </select>
+</mapper>
