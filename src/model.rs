@@ -1,0 +1,176 @@
+//! Output model — the serde serialization of these types IS the published
+//! schema (`schema/batis-xml.v1.json`, to be pinned by snapshot tests).
+//!
+//! Spec: spec-mybatis-mapper.md "Public API (final)". Removing or renaming
+//! fields is breaking; additions are non-breaking (including `DiagCode`).
+
+use serde::{Deserialize, Serialize};
+
+/// Half-open range `[start, end)` in **original bytes** — never in the
+/// decoded string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ByteSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Spanned<T> {
+    pub value: T,
+    pub span: ByteSpan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dialect {
+    Mybatis,
+    Ibatis,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParseResult {
+    pub dialect: Dialect,
+    /// `None` when the root element is not a mapper/sqlMap (reason is
+    /// reported as a diagnostic).
+    pub mapper: Option<Mapper>,
+    /// Parsing never fails — every anomaly accumulates here.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub code: DiagCode,
+    pub span: Option<ByteSpan>,
+    pub message: String,
+}
+
+/// Additions only; removal/renaming is breaking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagCode {
+    EncodingUndetectable,
+    EncodingMismatch,
+    UnclosedTag,
+    DuplicateStatementId,
+    MissingStatementId,
+    DanglingRefid,
+    BranchLimitExceeded,
+    UnknownElement,
+    OversizeInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Mapper {
+    /// Usually `None` for iBatis sqlMaps (observed in the wild: the prefix
+    /// lives inside the statement id itself, e.g. `WidgetDAO.getWidget`).
+    pub namespace: Option<Spanned<String>>,
+    pub statements: Vec<Statement>,
+    pub fragments: Vec<SqlFragment>,
+    pub result_maps: Vec<ResultMap>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatementKind {
+    Select,
+    Insert,
+    Update,
+    Delete,
+    Procedure,
+    /// iBatis `<statement>` and friends — the original tag name is
+    /// preserved in the diagnostic message.
+    Generic,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Statement {
+    pub kind: StatementKind,
+    /// `None` when missing, plus a `MissingStatementId` diagnostic.
+    /// Synthesized ids are never invented.
+    pub id: Option<Spanned<String>>,
+    pub sql: SqlText,
+    pub includes: Vec<Spanned<IncludeRef>>,
+    pub param_class: Option<Spanned<ClassRef>>,
+    pub result_class: Option<Spanned<ClassRef>>,
+    pub result_map_ref: Option<Spanned<String>>,
+    /// Expression paths collected from `#{a.b}` / `${c}` (MM-07).
+    pub property_paths: Vec<Spanned<String>>,
+}
+
+/// Result of dynamic-tag flattening (MM-06).
+/// Branch combination cap N=32 — total candidates per statement, computed
+/// as the cartesian product of tag branches.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SqlText {
+    Variants(Vec<SqlVariant>),
+    /// Over-cap fallback (accompanied by a `BranchLimitExceeded` diagnostic).
+    Union {
+        text: SqlString,
+        branch_count: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlVariant {
+    pub text: SqlString,
+    /// The `test` expressions (verbatim) that activate this variant.
+    pub conditions: Vec<String>,
+}
+
+/// Flattened SQL text plus a mapping back to the source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlString {
+    /// Placeholders already normalized: `#{..}` → `?`, `${..}` → `__ATLAS_DYN__`.
+    pub text: String,
+    /// (synthetic-text offset, original byte offset) segment-start pairs —
+    /// strictly increasing.
+    pub span_map: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlFragment {
+    pub id: Spanned<String>,
+    pub sql: SqlText,
+    /// Nested includes inside the fragment (MM-04).
+    pub includes: Vec<Spanned<IncludeRef>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IncludeRef {
+    pub raw: String,
+    pub target: IncludeTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IncludeTarget {
+    Local(String),
+    Qualified {
+        ns: String,
+        id: String,
+    },
+    /// `${}`-driven refid — marked unresolvable.
+    Dynamic,
+}
+
+/// Alias resolution is the consumer's job — only the raw text is kept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassRef {
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResultMap {
+    pub id: Spanned<String>,
+    pub type_ref: Option<Spanned<ClassRef>>,
+    pub extends: Option<Spanned<String>>,
+    pub mappings: Vec<ColumnMapping>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColumnMapping {
+    pub column: Option<String>,
+    pub property: Option<String>,
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <select id="widgetDAO.getWidgetList" parameterClass="java.lang.String" resultClass="widget">
+    <![CDATA[
+    SELECT widget_id, widget_name
+    FROM demo_widget
+    WHERE use_yn = 'Y'
+      AND grp_cd = #grpCd#
+    LIMIT 10
+    ]]>
+  </select>
+</sqlMap>

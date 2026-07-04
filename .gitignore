@@ -1,0 +1,27 @@
+# Build artifacts
+/target
+
+# Coverage / profiling
+*.profraw
+lcov.info
+coverage/
+
+# Snapshot testing (insta): pending snapshots are review-time only;
+# accepted .snap files ARE committed.
+*.snap.new
+*.pending-snap
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local scratch
+/scratch/
+
+# NOTE (deliberate non-ignores):
+# - Cargo.lock is committed (reproducible CI; current Cargo guidance
+#   permits this for libraries).
+# - proptest-regressions/ must be committed — they are regression seeds,
+#   not artifacts.
