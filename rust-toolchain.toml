@@ -1,0 +1,6 @@
+# Pins the toolchain for every contributor and agent session (rustup shim
+# auto-installs the target). Keep in sync with CI.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]
