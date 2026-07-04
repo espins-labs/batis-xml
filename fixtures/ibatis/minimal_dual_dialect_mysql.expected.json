@@ -42,8 +42,24 @@
           ]
         },
         "includes": [],
-        "param_class": null,
-        "result_class": null,
+        "param_class": {
+          "value": {
+            "raw": "java.lang.String"
+          },
+          "span": {
+            "start": 219,
+            "end": 235
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 250,
+            "end": 256
+          }
+        },
         "result_map_ref": null,
         "property_paths": [
           {

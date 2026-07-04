@@ -177,8 +177,10 @@ fn build_mapper(
 
     let mut statements = Vec::new();
     let mut fragments = Vec::new();
+    let mut result_maps = Vec::new();
     let mut seen_ids: HashSet<(String, Option<String>)> = HashSet::new();
     let mut seen_fragment_ids: HashSet<String> = HashSet::new();
+    let mut seen_result_map_ids: HashSet<String> = HashSet::new();
 
     loop {
         let child_start = reader.buffer_position();
@@ -290,6 +292,34 @@ fn build_mapper(
                     continue;
                 }
 
+                if local_name == b"resultMap" {
+                    let (result_map, mut diags) = build_result_map(
+                        source,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_result_map_ids,
+                    );
+                    diagnostics.append(&mut diags);
+
+                    let (segments, mut body_diags, truncated) =
+                        capture_body(source, reader, child_start as usize);
+                    diagnostics.append(&mut body_diags);
+
+                    if let Some(mut result_map) = result_map {
+                        collect_mappings(
+                            source,
+                            &segments,
+                            &mut result_map.mappings,
+                            &mut diagnostics,
+                        );
+                        result_maps.push(result_map);
+                    }
+                    if truncated {
+                        break;
+                    }
+                    continue;
+                }
+
                 match skip_subtree(reader) {
                     SkipOutcome::Eof => {
                         diagnostics.push(unclosed_tag(
@@ -336,6 +366,17 @@ fn build_mapper(
                     if let Some(fragment) = fragment {
                         fragments.push(fragment);
                     }
+                } else if local_name == b"resultMap" {
+                    let (result_map, mut diags) = build_result_map(
+                        source,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_result_map_ids,
+                    );
+                    diagnostics.append(&mut diags);
+                    if let Some(result_map) = result_map {
+                        result_maps.push(result_map);
+                    }
                 }
             }
             _ => continue,
@@ -361,7 +402,7 @@ fn build_mapper(
         namespace,
         statements,
         fragments,
-        result_maps: Vec::new(),
+        result_maps,
     };
     (mapper, diagnostics)
 }
@@ -422,6 +463,19 @@ fn build_statement(
         }),
     }
 
+    // MM-09: parameterType/resultType (MyBatis) or parameterClass/
+    // resultClass (iBatis) — checking both names regardless of dialect is
+    // simpler than threading dialect through, and harmless since a file
+    // only ever uses its own dialect's attribute name.
+    let (param_class, mut param_diags) =
+        read_class_ref(source, &attrs, &[b"parameterType", b"parameterClass"]);
+    diagnostics.append(&mut param_diags);
+    let (result_class, mut result_diags) =
+        read_class_ref(source, &attrs, &[b"resultType", b"resultClass"]);
+    diagnostics.append(&mut result_diags);
+    let (result_map_ref, mut rm_diags) = attr_value_spanned(source, &attrs, b"resultMap");
+    diagnostics.append(&mut rm_diags);
+
     let statement = Statement {
         kind,
         id,
@@ -430,12 +484,36 @@ fn build_statement(
         // and MM-06 (dynamic-tag flattening).
         sql: SqlText::Variants(Vec::new()),
         includes: Vec::new(),
-        param_class: None,
-        result_class: None,
-        result_map_ref: None,
+        param_class,
+        result_class,
+        result_map_ref,
         property_paths: Vec::new(),
     };
     (statement, diagnostics)
+}
+
+/// MM-09: reads the first present attribute among `names` as a
+/// [`ClassRef`] (raw, unparsed — alias resolution, generics, arrays are
+/// all the consumer's job). Checks every name (not just up to the first
+/// match) so duplicate-attribute diagnostics on a later name aren't lost.
+fn read_class_ref(
+    source: &str,
+    attrs: &[RawAttr],
+    names: &[&[u8]],
+) -> (Option<Spanned<ClassRef>>, Vec<Diagnostic>) {
+    let mut diagnostics = Vec::new();
+    let mut result = None;
+    for name in names {
+        let (value, mut diags) = attr_value_spanned(source, attrs, name);
+        diagnostics.append(&mut diags);
+        if result.is_none() {
+            result = value.map(|v| Spanned {
+                value: ClassRef { raw: v.value },
+                span: v.span,
+            });
+        }
+    }
+    (result, diagnostics)
 }
 
 /// MM-04: builds one [`SqlFragment`] from a `<sql>` tag's raw byte range.
@@ -487,6 +565,116 @@ fn build_fragment(
     };
 
     (fragment, diagnostics)
+}
+
+/// MM-10: builds one [`ResultMap`] from a `<resultMap>` tag's raw byte
+/// range. `seen_result_map_ids` is its own id space, separate from both
+/// statement and fragment ids. `mappings` starts empty — the caller fills
+/// it in via [`collect_mappings`] once the body has been walked.
+///
+/// `ResultMap.id` is non-optional in the model, so a `<resultMap>` without
+/// an `id` attribute can't be represented — dropped (`None` return) with a
+/// `MissingStatementId`-coded diagnostic, same pattern as `<sql>`.
+fn build_result_map(
+    source: &str,
+    tag_start: usize,
+    tag_end: usize,
+    seen_result_map_ids: &mut HashSet<String>,
+) -> (Option<ResultMap>, Vec<Diagnostic>) {
+    let attrs = scan_attributes(source.as_bytes(), tag_start, tag_end);
+    let (id, mut diagnostics) = attr_value_spanned(source, &attrs, b"id");
+    let (type_ref, mut type_diags) = read_class_ref(source, &attrs, &[b"type"]);
+    diagnostics.append(&mut type_diags);
+    let (extends, mut extends_diags) = attr_value_spanned(source, &attrs, b"extends");
+    diagnostics.append(&mut extends_diags);
+
+    let result_map = match id {
+        Some(id) => {
+            if !seen_result_map_ids.insert(id.value.clone()) {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::DuplicateStatementId,
+                    span: Some(id.span),
+                    message: format!("duplicate <resultMap> id '{}'", id.value),
+                });
+            }
+            Some(ResultMap {
+                id,
+                type_ref,
+                extends,
+                mappings: Vec::new(),
+            })
+        }
+        None => {
+            diagnostics.push(Diagnostic {
+                code: DiagCode::MissingStatementId,
+                span: Some(ByteSpan {
+                    start: tag_start as u32,
+                    end: tag_end as u32,
+                }),
+                message: "<resultMap> is missing an id attribute".to_string(),
+            });
+            None
+        }
+    };
+
+    (result_map, diagnostics)
+}
+
+/// MM-10: walks a `<resultMap>` body's [`BodySegment`]s, appending a
+/// [`ColumnMapping`] for each `<id>`/`<result>` child (column/property both
+/// optional), and recursing into `<association>`/`<collection>` bodies and
+/// `<discriminator>`'s `<case>` children — their mappings flatten into the
+/// same `Vec`, matching the model (`ColumnMapping` has no nested-structure
+/// field).
+fn collect_mappings(
+    source: &str,
+    segments: &[BodySegment],
+    mappings: &mut Vec<ColumnMapping>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for segment in segments {
+        let BodySegment::DynamicTag { name, span } = segment else {
+            continue; // whitespace between child elements
+        };
+
+        match name.as_str() {
+            "id" | "result" => {
+                let attrs =
+                    scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
+                let (column, mut d) = attr_value_spanned(source, &attrs, b"column");
+                diagnostics.append(&mut d);
+                let (property, mut d) = attr_value_spanned(source, &attrs, b"property");
+                diagnostics.append(&mut d);
+                mappings.push(ColumnMapping {
+                    column: column.map(|c| c.value),
+                    property: property.map(|p| p.value),
+                });
+            }
+            "association" | "collection" => {
+                let (inner, mut d, _truncated) = capture_subtree(source, *span);
+                diagnostics.append(&mut d);
+                collect_mappings(source, &inner, mappings, diagnostics);
+            }
+            "discriminator" => {
+                let (inner, mut d, _truncated) = capture_subtree(source, *span);
+                diagnostics.append(&mut d);
+                for case in &inner {
+                    if let BodySegment::DynamicTag {
+                        name: case_name,
+                        span: case_span,
+                    } = case
+                    {
+                        if case_name == "case" {
+                            let (case_inner, mut cd, _t) = capture_subtree(source, *case_span);
+                            diagnostics.append(&mut cd);
+                            collect_mappings(source, &case_inner, mappings, diagnostics);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// MM-05: lifts `<include>` [`BodySegment::DynamicTag`] markers (already
@@ -2234,5 +2422,259 @@ mod tests {
             .collect();
         assert!(paths.contains(&"ids"));
         assert!(paths.contains(&"ids[]"));
+    }
+
+    #[test]
+    fn mm_09_mybatis_parameter_and_result_type() {
+        let source = r#"<mapper namespace="x">
+            <select id="a" parameterType="long" resultType="com.example.Widget">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let stmt = &mapper.statements[0];
+        assert_eq!(stmt.param_class.as_ref().unwrap().value.raw, "long");
+        assert_eq!(
+            stmt.result_class.as_ref().unwrap().value.raw,
+            "com.example.Widget"
+        );
+    }
+
+    #[test]
+    fn mm_09_ibatis_parameter_and_result_class() {
+        let source = r#"<sqlMap>
+            <select id="a" parameterClass="java.lang.String" resultClass="widget">SELECT 1</select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let stmt = &mapper.statements[0];
+        assert_eq!(
+            stmt.param_class.as_ref().unwrap().value.raw,
+            "java.lang.String"
+        );
+        assert_eq!(stmt.result_class.as_ref().unwrap().value.raw, "widget");
+    }
+
+    #[test]
+    fn mm_09_result_map_ref_attribute() {
+        let source = r#"<mapper namespace="x">
+            <select id="a" resultMap="widgetResult">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.statements[0].result_map_ref.as_ref().unwrap().value,
+            "widgetResult"
+        );
+    }
+
+    #[test]
+    fn mm_09_class_ref_generic_type_with_angle_brackets() {
+        // Exercises </> inside a quoted attribute value through the
+        // scan_attributes tokenizer (which consumes the quoted value as a
+        // whole unit, so embedded '<'/'>' can't confuse it).
+        let source = r#"<mapper namespace="x">
+            <select id="a" resultType="java.util.List&lt;com.example.Widget&gt;">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        // Entities in attribute values aren't decoded by scan_attributes
+        // (same convention as id/namespace) — raw is kept exactly as it
+        // appears in the source.
+        assert_eq!(
+            mapper.statements[0]
+                .result_class
+                .as_ref()
+                .unwrap()
+                .value
+                .raw,
+            "java.util.List&lt;com.example.Widget&gt;"
+        );
+    }
+
+    #[test]
+    fn mm_09_class_ref_array_type() {
+        let source = r#"<mapper namespace="x">
+            <select id="a" resultType="int[]">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.statements[0]
+                .result_class
+                .as_ref()
+                .unwrap()
+                .value
+                .raw,
+            "int[]"
+        );
+    }
+
+    #[test]
+    fn mm_09_class_ref_alias_kept_raw_no_resolution() {
+        let source = r#"<mapper namespace="x">
+            <select id="a" resultType="widget">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.statements[0]
+                .result_class
+                .as_ref()
+                .unwrap()
+                .value
+                .raw,
+            "widget"
+        );
+    }
+
+    #[test]
+    fn mm_10_resultmap_id_and_result_mappings() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="widgetResult" type="com.example.Widget">
+                <id column="widget_id" property="id"/>
+                <result column="widget_name" property="name"/>
+            </resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 1);
+        let rm = &mapper.result_maps[0];
+        assert_eq!(rm.id.value, "widgetResult");
+        assert_eq!(
+            rm.type_ref.as_ref().unwrap().value.raw,
+            "com.example.Widget"
+        );
+        assert_eq!(rm.mappings.len(), 2);
+        assert_eq!(rm.mappings[0].column.as_deref(), Some("widget_id"));
+        assert_eq!(rm.mappings[0].property.as_deref(), Some("id"));
+        assert_eq!(rm.mappings[1].column.as_deref(), Some("widget_name"));
+        assert_eq!(rm.mappings[1].property.as_deref(), Some("name"));
+    }
+
+    #[test]
+    fn mm_10_resultmap_extends() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="base" type="com.example.Base"><id column="id" property="id"/></resultMap>
+            <resultMap id="derived" type="com.example.Derived" extends="base">
+                <result column="extra" property="extra"/>
+            </resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let derived = mapper
+            .result_maps
+            .iter()
+            .find(|r| r.id.value == "derived")
+            .unwrap();
+        assert_eq!(derived.extends.as_ref().unwrap().value, "base");
+        assert_eq!(derived.mappings.len(), 1);
+    }
+
+    #[test]
+    fn mm_10_resultmap_nested_association_and_collection_flattened() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="orderResult" type="com.example.Order">
+                <id column="order_id" property="id"/>
+                <association property="widget" javaType="com.example.Widget">
+                    <result column="widget_name" property="name"/>
+                </association>
+                <collection property="items" ofType="com.example.Item">
+                    <result column="item_id" property="id"/>
+                </collection>
+            </resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let rm = &mapper.result_maps[0];
+        let columns: Vec<_> = rm
+            .mappings
+            .iter()
+            .map(|m| m.column.as_deref().unwrap())
+            .collect();
+        assert_eq!(columns, vec!["order_id", "widget_name", "item_id"]);
+    }
+
+    #[test]
+    fn mm_10_resultmap_discriminator_case_flattened() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="widgetResult" type="com.example.Widget">
+                <id column="widget_id" property="id"/>
+                <discriminator column="widget_type" javaType="string">
+                    <case value="A"><result column="a_field" property="aField"/></case>
+                    <case value="B"><result column="b_field" property="bField"/></case>
+                </discriminator>
+            </resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let rm = &mapper.result_maps[0];
+        let columns: Vec<_> = rm
+            .mappings
+            .iter()
+            .map(|m| m.column.as_deref().unwrap())
+            .collect();
+        assert_eq!(columns, vec!["widget_id", "a_field", "b_field"]);
+    }
+
+    #[test]
+    fn mm_10_resultmap_duplicate_id_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="dup" type="com.example.A"><id column="a" property="a"/></resultMap>
+            <resultMap id="dup" type="com.example.B"><id column="b" property="b"/></resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 2);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::DuplicateStatementId)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn mm_10_resultmap_id_space_separate_from_statement_and_fragment_ids() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="shared" type="com.example.A"><id column="a" property="a"/></resultMap>
+            <sql id="shared">a</sql>
+            <select id="shared">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 1);
+        assert_eq!(mapper.fragments.len(), 1);
+        assert_eq!(mapper.statements.len(), 1);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn mm_10_resultmap_missing_id_dropped_with_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <resultMap type="com.example.A"><id column="a" property="a"/></resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert!(mapper.result_maps.is_empty());
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::MissingStatementId));
+    }
+
+    #[test]
+    fn mm_10_resultmap_self_closing_has_empty_mappings() {
+        let source = r#"<mapper namespace="x">
+            <resultMap id="empty" type="com.example.A"/>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 1);
+        assert!(mapper.result_maps[0].mappings.is_empty());
     }
 }

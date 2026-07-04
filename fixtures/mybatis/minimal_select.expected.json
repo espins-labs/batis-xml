@@ -40,8 +40,24 @@
           ]
         },
         "includes": [],
-        "param_class": null,
-        "result_class": null,
+        "param_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 254,
+            "end": 258
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 272,
+            "end": 301
+          }
+        },
         "result_map_ref": null,
         "property_paths": [
           {
