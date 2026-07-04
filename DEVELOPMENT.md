@@ -31,7 +31,7 @@ pass bar 85%).
 ## Pre-publish checklist
 
 - [x] Generate `schema/batis-xml.v1.json` and pin it with a snapshot test
-- [ ] Conformance corpus: 15+ MyBatis / 8+ iBatis (3+ dual-dialect pairs) / hostile set
+- [x] Conformance corpus: 15+ MyBatis / 8+ iBatis (3+ dual-dialect pairs) / hostile set
 - [x] License review (MIT alone vs MIT OR Apache-2.0 dual) — dual-licensed
 - [ ] Wire up cargo-semver-checks and release-plz
 - [ ] Decide whether wasm bindings ship as a separate `batis-xml-wasm` crate
