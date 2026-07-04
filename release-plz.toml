@@ -1,5 +1,8 @@
-# release-plz config -- single-crate defaults (no [[package]] overrides
-# needed; there's exactly one package in this repo).
+# release-plz config. Two packages in this workspace (batis-xml,
+# batis-xml-wasm) -- no [[package]] overrides needed, since both should be
+# released the same way and release-plz natively publishes workspace
+# members in dependency order (batis-xml before batis-xml-wasm, which
+# path-depends on it).
 #
 # Dormant until: (1) this repo is pushed to its GitHub remote, and (2) a
 # CARGO_REGISTRY_TOKEN repo secret is set. Until then release-plz.yml has

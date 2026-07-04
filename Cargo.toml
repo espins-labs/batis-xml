@@ -1,3 +1,10 @@
+[workspace]
+members = ["wasm"]
+# Plain `cargo build`/`test`/`check` (no -p/--workspace) still targets only
+# the core crate -- unchanged behavior from before this was a workspace.
+# The wasm crate is built explicitly (`-p batis-xml-wasm` or `wasm-pack`).
+default-members = ["."]
+
 [package]
 name = "batis-xml"
 version = "0.1.0"

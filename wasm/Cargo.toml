@@ -1,0 +1,19 @@
+[package]
+name = "batis-xml-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["ESPINS <dlwlalsggg@gmail.com>"]
+description = "WebAssembly bindings for batis-xml (MyBatis/iBatis mapper XML parser)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/espins-labs/batis-xml"
+keywords = ["mybatis", "ibatis", "wasm", "parser"]
+categories = ["wasm"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+batis-xml = { path = "..", version = "0.1.0" }
+serde_json = "1"
+wasm-bindgen = "0.2"
