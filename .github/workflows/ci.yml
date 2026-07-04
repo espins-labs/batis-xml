@@ -19,7 +19,17 @@ jobs:
       # the core crate's dependency purity above is unaffected by it.
       - run: cargo clippy -p batis-xml-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
       - uses: taiki-e/install-action@wasm-pack
-      - run: wasm-pack build wasm --target nodejs
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+        working-directory: wasm
+      # Drift gate: wasm/schema.d.ts is committed and hand-reviewed; this
+      # fails if schema/batis-xml.v1.json changed without regenerating it.
+      - name: Check wasm/schema.d.ts has no drift
+        run: |
+          npx --prefix wasm json2ts -i schema/batis-xml.v1.json -o /tmp/schema.d.ts --unreachableDefinitions
+          diff wasm/schema.d.ts /tmp/schema.d.ts
+      - run: ./wasm/build.sh
       - run: node wasm/tests/smoke.js
 
   test-matrix:

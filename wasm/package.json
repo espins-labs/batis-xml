@@ -1,0 +1,8 @@
+{
+  "name": "batis-xml-wasm-build-tools",
+  "private": true,
+  "description": "Dev-only tooling for building the batis-xml npm package (see build.sh). Not published -- wasm-pack generates the real pkg/package.json.",
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4"
+  }
+}

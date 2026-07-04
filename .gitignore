@@ -1,6 +1,7 @@
 # Build artifacts
 /target
 /wasm/pkg/
+/wasm/node_modules/
 *.tgz
 
 # Coverage / profiling

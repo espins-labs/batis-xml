@@ -39,21 +39,36 @@ crate (`default-members` in the root `Cargo.toml`) -- the wasm crate is
 always built explicitly.
 
 Minimal API, JSON-string boundary (schema v1, no per-field marshalling):
-`parse(bytes: &[u8]) -> String` and `version() -> String`.
+`parse(bytes: &[u8]) -> String`, `detect(bytes: &[u8]) -> String` (cheap
+dialect pre-check, plain string not JSON-quoted), and `version() -> String`.
 
-Build with:
+Build with the one command:
 
 ```
-wasm-pack build wasm --target nodejs
+./wasm/build.sh
 node wasm/tests/smoke.js   # smoke test against the built pkg/
 ```
 
-This produces `wasm/pkg/` (gitignored -- rebuilt on demand, not committed).
-The npm package name (`batis-xml`, availability verified) differs from the
-Cargo package name (`batis-xml-wasm`, matching this crate's own crates.io
-identity); `wasm-pack` writes the Cargo name into `pkg/package.json`, so
-renaming it is a manual step before `npm pack` -- this repo does not
-automate or run `npm publish`.
+`wasm/build.sh` runs `wasm-pack build wasm --target nodejs`, then:
+- copies the committed, drift-checked `wasm/schema.d.ts` (generated from
+  `schema/batis-xml.v1.json` via `json-schema-to-typescript` --
+  `cd wasm && npm ci && npx json2ts -i ../schema/batis-xml.v1.json -o
+  schema.d.ts --unreachableDefinitions` to regenerate deliberately after a
+  model change, review the diff, then commit; CI fails on any undeclared
+  drift) into `pkg/schema.d.ts`
+- patches `pkg/package.json`'s name from the Cargo package name
+  (`batis-xml-wasm`, matching this crate's own crates.io identity -- see
+  `release-plz.toml`, excluded from crates.io releases since npm is its
+  channel) to the verified-available npm name (`batis-xml`), and adds
+  `schema.d.ts` to its `files` list
+
+This produces `wasm/pkg/` (gitignored -- rebuilt on demand, not committed)
+ready for `npm pack`; this repo does not automate or run `npm publish`.
+`wasm/README.md` (wasm-pack copies it into `pkg/` automatically) documents
+the three sharpest edges for npm consumers: feed raw bytes not
+host-pre-decoded strings, spans are UTF-8 byte offsets not JS indices, and
+build qualified names as `ns.id@databaseId` to avoid dual-dialect
+collisions.
 
 ## Pre-publish checklist
 
