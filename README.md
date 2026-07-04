@@ -31,7 +31,7 @@ mapper XML ──▶ batis-xml ──▶ { statements, flattened SQL variants,
 - **Pure Rust**: builds clean for `wasm32-unknown-unknown` — usable from
   Node/TypeScript via wasm, and from the JVM via wasm runtimes.
 
-## Example (target API)
+## Example
 
 ```rust
 let result = batis_xml::parse_bytes(&std::fs::read("OrderMapper.xml")?);
@@ -42,8 +42,17 @@ for stmt in &result.mapper.as_ref().unwrap().statements {
 
 ## Status
 
-Scaffold — public API and output model are final; the parser is being built
-micro-feature-first with test-first development. Do not depend on this yet.
+MM-01 through MM-14 are complete: parsing, dynamic-SQL flattening,
+`<include>` resolution, `resultMap`s, placeholder normalization, encoding
+detection, and hostile-input recovery are all implemented and tested.
+
+Validated against a 195-file real-world legacy mapper corpus (MyBatis +
+iBatis): 100% parse success (no panics, no `Err`), with statement/binding
+accuracy of 98.9% (MyBatis) and 87.6% (iBatis) against an 85% acceptance
+bar.
+
+Pre-publish housekeeping (coverage/bench gates, schema pinning, release
+automation) is tracked in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Use cases
 

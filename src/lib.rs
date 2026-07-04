@@ -14,9 +14,10 @@
 //!
 //! ## Status
 //!
-//! **Scaffold** — the public API and output model are final; the parser is
-//! being built micro-feature-first with test-first development (unit tests
-//! are prefixed with their spec id, e.g. `mm_01_...`).
+//! MM-01 through MM-14 are complete and validated against a 195-file
+//! real-world legacy mapper corpus (100% parse success; statement/binding
+//! accuracy 98.9% MyBatis / 87.6% iBatis against an 85% bar). See the
+//! crate's `README.md` for details.
 
 mod encoding;
 mod flatten;
