@@ -36,3 +36,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # spec DoD: 90%+ line coverage (measured 94.89% at the pre-publish checklist)
       - run: cargo llvm-cov --all-features --fail-under-lines 90
+
+  semver-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-semver-checks
+      - uses: Swatinem/rust-cache@v2
+      # No baseline exists on crates.io yet (pre-first-publish) -- this is
+      # expected to fail with "no crate found" until 0.1.0 is published.
+      # Remove continue-on-error at that point.
+      - run: cargo semver-checks
+        continue-on-error: true
