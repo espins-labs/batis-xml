@@ -16,18 +16,21 @@ use serde::{Deserialize, Serialize};
 /// re-encoded UTF-8 string, not the original raw bytes. Consumers reading
 /// spans back against a source file must decode that source the same way
 /// this crate did before slicing.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteSpan {
     pub start: u32,
     pub end: u32,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Spanned<T> {
     pub value: T,
     pub span: ByteSpan,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Dialect {
@@ -36,6 +39,7 @@ pub enum Dialect {
     Unknown,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParseResult {
     pub dialect: Dialect,
@@ -46,6 +50,7 @@ pub struct ParseResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub code: DiagCode,
@@ -54,6 +59,7 @@ pub struct Diagnostic {
 }
 
 /// Additions only; removal/renaming is breaking.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagCode {
@@ -76,6 +82,7 @@ pub enum DiagCode {
     UnterminatedPlaceholder,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Mapper {
     /// Usually `None` for iBatis sqlMaps (observed in the wild: the prefix
@@ -86,6 +93,7 @@ pub struct Mapper {
     pub result_maps: Vec<ResultMap>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StatementKind {
@@ -99,6 +107,7 @@ pub enum StatementKind {
     Generic,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Statement {
     pub kind: StatementKind,
@@ -122,6 +131,7 @@ pub struct Statement {
 /// Result of dynamic-tag flattening (MM-06).
 /// Branch combination cap N=32 — total candidates per statement, computed
 /// as the cartesian product of tag branches.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SqlText {
@@ -133,6 +143,7 @@ pub enum SqlText {
     },
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlVariant {
     pub text: SqlString,
@@ -141,6 +152,7 @@ pub struct SqlVariant {
 }
 
 /// Flattened SQL text plus a mapping back to the source.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlString {
     /// Placeholders already normalized: `#{..}` → `?`, `${..}` → `__ATLAS_DYN__`.
@@ -150,6 +162,7 @@ pub struct SqlString {
     pub span_map: Vec<(u32, u32)>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlFragment {
     pub id: Spanned<String>,
@@ -158,12 +171,14 @@ pub struct SqlFragment {
     pub includes: Vec<Spanned<IncludeRef>>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IncludeRef {
     pub raw: String,
     pub target: IncludeTarget,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IncludeTarget {
@@ -177,11 +192,13 @@ pub enum IncludeTarget {
 }
 
 /// Alias resolution is the consumer's job — only the raw text is kept.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClassRef {
     pub raw: String,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResultMap {
     pub id: Spanned<String>,
@@ -190,6 +207,7 @@ pub struct ResultMap {
     pub mappings: Vec<ColumnMapping>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnMapping {
     pub column: Option<String>,

@@ -17,6 +17,12 @@ quick-xml = "0.37"
 encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Optional, off by default: JSON Schema generation for schema/batis-xml.v1.json.
+# Pure Rust, so enabling it doesn't affect the wasm32-unknown-unknown gate.
+schemars = { version = "0.8", optional = true }
+
+[features]
+schema = ["dep:schemars"]
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }

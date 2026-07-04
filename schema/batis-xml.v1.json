@@ -1,0 +1,568 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ParseResult",
+  "type": "object",
+  "required": [
+    "diagnostics",
+    "dialect"
+  ],
+  "properties": {
+    "diagnostics": {
+      "description": "Parsing never fails — every anomaly accumulates here.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Diagnostic"
+      }
+    },
+    "dialect": {
+      "$ref": "#/definitions/Dialect"
+    },
+    "mapper": {
+      "description": "`None` when the root element is not a mapper/sqlMap (reason is reported as a diagnostic).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Mapper"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "ByteSpan": {
+      "description": "Half-open range `[start, end)` in **original bytes** — never in the decoded string.\n\nCaveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents that were re-encoded from EUC-KR/CP949 (see `encoding.rs`), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.",
+      "type": "object",
+      "required": [
+        "end",
+        "start"
+      ],
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ClassRef": {
+      "description": "Alias resolution is the consumer's job — only the raw text is kept.",
+      "type": "object",
+      "required": [
+        "raw"
+      ],
+      "properties": {
+        "raw": {
+          "type": "string"
+        }
+      }
+    },
+    "ColumnMapping": {
+      "type": "object",
+      "properties": {
+        "column": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "property": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "DiagCode": {
+      "description": "Additions only; removal/renaming is breaking.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "encoding_undetectable",
+            "encoding_mismatch",
+            "unclosed_tag",
+            "duplicate_statement_id",
+            "missing_statement_id",
+            "dangling_refid",
+            "branch_limit_exceeded",
+            "unknown_element",
+            "oversize_input"
+          ]
+        },
+        {
+          "description": "Recovery rule 3: first value wins, duplicate is reported here.",
+          "type": "string",
+          "enum": [
+            "duplicate_attribute"
+          ]
+        },
+        {
+          "description": "An entity reference could not be resolved (e.g. `&nbsp;`, common in legacy mappers). The raw text is kept as-is for that segment (MM-08).",
+          "type": "string",
+          "enum": [
+            "invalid_entity"
+          ]
+        },
+        {
+          "description": "A `#{`/`${`/legacy `#..#`/`$..$` placeholder never found its closing delimiter within the segment. The raw text is kept as-is (MM-07).",
+          "type": "string",
+          "enum": [
+            "unterminated_placeholder"
+          ]
+        }
+      ]
+    },
+    "Diagnostic": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/DiagCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ByteSpan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Dialect": {
+      "type": "string",
+      "enum": [
+        "mybatis",
+        "ibatis",
+        "unknown"
+      ]
+    },
+    "IncludeRef": {
+      "type": "object",
+      "required": [
+        "raw",
+        "target"
+      ],
+      "properties": {
+        "raw": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/definitions/IncludeTarget"
+        }
+      }
+    },
+    "IncludeTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "local"
+          ],
+          "properties": {
+            "local": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "qualified"
+          ],
+          "properties": {
+            "qualified": {
+              "type": "object",
+              "required": [
+                "id",
+                "ns"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "ns": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "`${}`-driven refid — marked unresolvable.",
+          "type": "string",
+          "enum": [
+            "dynamic"
+          ]
+        }
+      ]
+    },
+    "Mapper": {
+      "type": "object",
+      "required": [
+        "fragments",
+        "result_maps",
+        "statements"
+      ],
+      "properties": {
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SqlFragment"
+          }
+        },
+        "namespace": {
+          "description": "Usually `None` for iBatis sqlMaps (observed in the wild: the prefix lives inside the statement id itself, e.g. `WidgetDAO.getWidget`).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_maps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResultMap"
+          }
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Statement"
+          }
+        }
+      }
+    },
+    "ResultMap": {
+      "type": "object",
+      "required": [
+        "id",
+        "mappings"
+      ],
+      "properties": {
+        "extends": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "$ref": "#/definitions/Spanned_for_String"
+        },
+        "mappings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ColumnMapping"
+          }
+        },
+        "type_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_ClassRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Spanned_for_ClassRef": {
+      "type": "object",
+      "required": [
+        "span",
+        "value"
+      ],
+      "properties": {
+        "span": {
+          "$ref": "#/definitions/ByteSpan"
+        },
+        "value": {
+          "$ref": "#/definitions/ClassRef"
+        }
+      }
+    },
+    "Spanned_for_IncludeRef": {
+      "type": "object",
+      "required": [
+        "span",
+        "value"
+      ],
+      "properties": {
+        "span": {
+          "$ref": "#/definitions/ByteSpan"
+        },
+        "value": {
+          "$ref": "#/definitions/IncludeRef"
+        }
+      }
+    },
+    "Spanned_for_String": {
+      "type": "object",
+      "required": [
+        "span",
+        "value"
+      ],
+      "properties": {
+        "span": {
+          "$ref": "#/definitions/ByteSpan"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "SqlFragment": {
+      "type": "object",
+      "required": [
+        "id",
+        "includes",
+        "sql"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Spanned_for_String"
+        },
+        "includes": {
+          "description": "Nested includes inside the fragment (MM-04).",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Spanned_for_IncludeRef"
+          }
+        },
+        "sql": {
+          "$ref": "#/definitions/SqlText"
+        }
+      }
+    },
+    "SqlString": {
+      "description": "Flattened SQL text plus a mapping back to the source.",
+      "type": "object",
+      "required": [
+        "span_map",
+        "text"
+      ],
+      "properties": {
+        "span_map": {
+          "description": "(synthetic-text offset, original byte offset) segment-start pairs — strictly increasing.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": [
+              {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0.0
+              },
+              {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0.0
+              }
+            ],
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "text": {
+          "description": "Placeholders already normalized: `#{..}` → `?`, `${..}` → `__ATLAS_DYN__`.",
+          "type": "string"
+        }
+      }
+    },
+    "SqlText": {
+      "description": "Result of dynamic-tag flattening (MM-06). Branch combination cap N=32 — total candidates per statement, computed as the cartesian product of tag branches.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "variants"
+          ],
+          "properties": {
+            "variants": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SqlVariant"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Over-cap fallback (accompanied by a `BranchLimitExceeded` diagnostic).",
+          "type": "object",
+          "required": [
+            "union"
+          ],
+          "properties": {
+            "union": {
+              "type": "object",
+              "required": [
+                "branch_count",
+                "text"
+              ],
+              "properties": {
+                "branch_count": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0.0
+                },
+                "text": {
+                  "$ref": "#/definitions/SqlString"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SqlVariant": {
+      "type": "object",
+      "required": [
+        "conditions",
+        "text"
+      ],
+      "properties": {
+        "conditions": {
+          "description": "The `test` expressions (verbatim) that activate this variant.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "$ref": "#/definitions/SqlString"
+        }
+      }
+    },
+    "Statement": {
+      "type": "object",
+      "required": [
+        "includes",
+        "kind",
+        "property_paths",
+        "sql"
+      ],
+      "properties": {
+        "database_id": {
+          "description": "MyBatis per-vendor branching (`databaseId=\"oracle\"` etc.) — `None` when the statement doesn't declare one. Distinguishes otherwise duplicate ids (MM-03).",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "description": "`None` when missing, plus a `MissingStatementId` diagnostic. Synthesized ids are never invented.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "includes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Spanned_for_IncludeRef"
+          }
+        },
+        "kind": {
+          "$ref": "#/definitions/StatementKind"
+        },
+        "param_class": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_ClassRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "property_paths": {
+          "description": "Expression paths collected from `#{a.b}` / `${c}` (MM-07).",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Spanned_for_String"
+          }
+        },
+        "result_class": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_ClassRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_map_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Spanned_for_String"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sql": {
+          "$ref": "#/definitions/SqlText"
+        }
+      }
+    },
+    "StatementKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "select",
+            "insert",
+            "update",
+            "delete",
+            "procedure"
+          ]
+        },
+        {
+          "description": "iBatis `<statement>` — a generic statement tag with no MyBatis CRUD-verb equivalent.",
+          "type": "string",
+          "enum": [
+            "generic"
+          ]
+        }
+      ]
+    }
+  }
+}
