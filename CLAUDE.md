@@ -2,7 +2,10 @@
 
 Parser + dynamic-SQL flattener for MyBatis/iBatis mapper XML. Public API and
 output model in `src/model.rs` are **final** — implement the parser behind
-them; do not change model fields without explicit approval.
+them; do not change model fields without explicit approval. One exception:
+**adding `DiagCode` variants is allowed** (the schema is additive there),
+but every addition must be called out explicitly in your status report so
+the spec can be kept in sync.
 
 ## Method (non-negotiable)
 
