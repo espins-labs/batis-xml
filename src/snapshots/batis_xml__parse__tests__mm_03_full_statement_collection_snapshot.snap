@@ -1,0 +1,102 @@
+---
+source: src/parse.rs
+expression: result
+---
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.WidgetMapper",
+      "span": {
+        "start": 19,
+        "end": 43
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 70,
+            "end": 82
+          }
+        },
+        "sql": {
+          "variants": []
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 156,
+            "end": 168
+          }
+        },
+        "sql": {
+          "variants": []
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "insert",
+        "id": {
+          "value": "insertWidget",
+          "span": {
+            "start": 231,
+            "end": 243
+          }
+        },
+        "sql": {
+          "variants": []
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 312,
+            "end": 324
+          }
+        },
+        "sql": {
+          "variants": []
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": [
+    {
+      "code": "duplicate_statement_id",
+      "span": {
+        "start": 312,
+        "end": 324
+      },
+      "message": "duplicate statement id 'selectWidget'"
+    }
+  ]
+}

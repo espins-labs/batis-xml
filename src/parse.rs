@@ -19,6 +19,7 @@
 use crate::model::*;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use std::collections::HashSet;
 
 /// MM-01: identifies the root element and derives the dialect from its
 /// name (`<mapper>` → MyBatis, `<sqlMap>` → iBatis).
@@ -28,7 +29,42 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
     loop {
         let start = reader.buffer_position();
         match reader.read_event() {
-            Ok(Event::Start(tag)) | Ok(Event::Empty(tag)) => {
+            Ok(Event::Start(tag)) => {
+                let end = reader.buffer_position();
+                let name = tag.local_name();
+                let dialect = match name.as_ref() {
+                    b"mapper" => Some(Dialect::Mybatis),
+                    b"sqlMap" => Some(Dialect::Ibatis),
+                    _ => None,
+                };
+                return match dialect {
+                    Some(dialect) => {
+                        let (mapper, diagnostics) =
+                            build_mapper(source, &mut reader, start as usize, end as usize);
+                        ParseResult {
+                            dialect,
+                            mapper: Some(mapper),
+                            diagnostics,
+                        }
+                    }
+                    None => ParseResult {
+                        dialect: Dialect::Unknown,
+                        mapper: None,
+                        diagnostics: vec![Diagnostic {
+                            code: DiagCode::UnknownElement,
+                            span: Some(ByteSpan {
+                                start: start as u32,
+                                end: end as u32,
+                            }),
+                            message: format!(
+                                "root element <{}> is not a mapper/sqlMap",
+                                String::from_utf8_lossy(name.as_ref())
+                            ),
+                        }],
+                    },
+                };
+            }
+            Ok(Event::Empty(tag)) => {
                 let end = reader.buffer_position();
                 let name = tag.local_name();
                 let name = name.as_ref();
@@ -108,13 +144,219 @@ fn mapper_with_namespace(
     tag_start: usize,
     tag_end: usize,
 ) -> (Mapper, Vec<Diagnostic>) {
-    let bytes = source.as_bytes();
-    let attrs = scan_attributes(bytes, tag_start, tag_end);
-    let mut matches = attrs
-        .iter()
-        .filter(|a| &bytes[a.name.0..a.name.1] == b"namespace");
+    let attrs = scan_attributes(source.as_bytes(), tag_start, tag_end);
+    let (namespace, diagnostics) = attr_value_spanned(source, &attrs, b"namespace");
+    let mapper = Mapper {
+        namespace,
+        statements: Vec::new(),
+        fragments: Vec::new(),
+        result_maps: Vec::new(),
+    };
+    (mapper, diagnostics)
+}
 
-    let namespace = matches.next().map(|attr| Spanned {
+/// MM-03: builds the mapper, including its direct-child statement elements
+/// (`select`/`insert`/`update`/`delete` + iBatis `procedure`/`statement`).
+/// `reader` has just produced the root's `Start` event (`root_start`,
+/// `root_tag_end` bound that event's raw bytes); this walks siblings until
+/// the root's matching `End`.
+fn build_mapper(
+    source: &str,
+    reader: &mut Reader<&[u8]>,
+    root_start: usize,
+    root_tag_end: usize,
+) -> (Mapper, Vec<Diagnostic>) {
+    let root_attrs = scan_attributes(source.as_bytes(), root_start, root_tag_end);
+    let (namespace, mut diagnostics) = attr_value_spanned(source, &root_attrs, b"namespace");
+
+    let mut statements = Vec::new();
+    let mut seen_ids: HashSet<(String, Option<String>)> = HashSet::new();
+
+    loop {
+        let child_start = reader.buffer_position();
+        match reader.read_event() {
+            Ok(Event::End(_)) => break, // root closed
+            Ok(Event::Eof) => {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::UnclosedTag,
+                    span: Some(ByteSpan {
+                        start: root_start as u32,
+                        end: source.len() as u32,
+                    }),
+                    message: "root element was never closed".to_string(),
+                });
+                break;
+            }
+            Err(_) => break,
+            Ok(Event::Start(tag)) => {
+                let tag_end = reader.buffer_position();
+                let kind = statement_kind(tag.local_name().as_ref());
+                if let Some(kind) = kind {
+                    let (statement, mut diags) = build_statement(
+                        source,
+                        kind,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_ids,
+                    );
+                    diagnostics.append(&mut diags);
+                    statements.push(statement);
+                }
+                match skip_subtree(reader) {
+                    SkipOutcome::Eof => {
+                        diagnostics.push(Diagnostic {
+                            code: DiagCode::UnclosedTag,
+                            span: Some(ByteSpan {
+                                start: child_start as u32,
+                                end: source.len() as u32,
+                            }),
+                            message: "element was never closed".to_string(),
+                        });
+                        break;
+                    }
+                    SkipOutcome::Err => break,
+                    SkipOutcome::Closed => {}
+                }
+            }
+            Ok(Event::Empty(tag)) => {
+                let tag_end = reader.buffer_position();
+                if let Some(kind) = statement_kind(tag.local_name().as_ref()) {
+                    let (statement, mut diags) = build_statement(
+                        source,
+                        kind,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_ids,
+                    );
+                    diagnostics.append(&mut diags);
+                    statements.push(statement);
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    let mapper = Mapper {
+        namespace,
+        statements,
+        fragments: Vec::new(),
+        result_maps: Vec::new(),
+    };
+    (mapper, diagnostics)
+}
+
+/// Maps a statement-like tag's local name to its [`StatementKind`]. `None`
+/// means "not a statement" (e.g. `<resultMap>`, `<sql>` — owned by other
+/// micro-features).
+fn statement_kind(local_name: &[u8]) -> Option<StatementKind> {
+    match local_name {
+        b"select" => Some(StatementKind::Select),
+        b"insert" => Some(StatementKind::Insert),
+        b"update" => Some(StatementKind::Update),
+        b"delete" => Some(StatementKind::Delete),
+        b"procedure" => Some(StatementKind::Procedure),
+        b"statement" => Some(StatementKind::Generic),
+        _ => None,
+    }
+}
+
+/// Builds one [`Statement`] from its tag's raw byte range. `seen_ids`
+/// tracks `(id, databaseId)` pairs already collected in this mapper so a
+/// repeated id — legitimate under MyBatis `databaseId` branching when the
+/// `databaseId` differs — only reports `DuplicateStatementId` when both
+/// match.
+fn build_statement(
+    source: &str,
+    kind: StatementKind,
+    tag_start: usize,
+    tag_end: usize,
+    seen_ids: &mut HashSet<(String, Option<String>)>,
+) -> (Statement, Vec<Diagnostic>) {
+    let attrs = scan_attributes(source.as_bytes(), tag_start, tag_end);
+    let (id, mut diagnostics) = attr_value_spanned(source, &attrs, b"id");
+    let (database_id, mut db_diags) = attr_value_spanned(source, &attrs, b"databaseId");
+    diagnostics.append(&mut db_diags);
+
+    match &id {
+        Some(id) => {
+            let key = (id.value.clone(), database_id.map(|d| d.value));
+            if !seen_ids.insert(key) {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::DuplicateStatementId,
+                    span: Some(id.span),
+                    message: format!("duplicate statement id '{}'", id.value),
+                });
+            }
+        }
+        None => diagnostics.push(Diagnostic {
+            code: DiagCode::MissingStatementId,
+            span: Some(ByteSpan {
+                start: tag_start as u32,
+                end: tag_end as u32,
+            }),
+            message: "statement is missing an id attribute".to_string(),
+        }),
+    }
+
+    let statement = Statement {
+        kind,
+        id,
+        // Placeholder — real SQL text capture lands in MM-08 (CDATA/entities)
+        // and MM-06 (dynamic-tag flattening).
+        sql: SqlText::Variants(Vec::new()),
+        includes: Vec::new(),
+        param_class: None,
+        result_class: None,
+        result_map_ref: None,
+        property_paths: Vec::new(),
+    };
+    (statement, diagnostics)
+}
+
+/// Outcome of consuming a subtree after its opening `Start` event.
+enum SkipOutcome {
+    /// The matching `End` was found.
+    Closed,
+    /// Input ended before the matching `End` (recovery rule 1: the parent
+    /// closing implicitly closes this element — the caller reports it).
+    Eof,
+    /// A parse error occurred while skipping.
+    Err,
+}
+
+/// Consumes events until the `End` that matches the `Start` the caller just
+/// read (simple depth counting — assumes well-nested input; hostile/
+/// malformed nesting is refined in MM-13).
+fn skip_subtree(reader: &mut Reader<&[u8]>) -> SkipOutcome {
+    let mut depth = 1u32;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(_)) => depth += 1,
+            Ok(Event::End(_)) => {
+                depth -= 1;
+                if depth == 0 {
+                    return SkipOutcome::Closed;
+                }
+            }
+            Ok(Event::Eof) => return SkipOutcome::Eof,
+            Err(_) => return SkipOutcome::Err,
+            _ => {}
+        }
+    }
+}
+
+/// Returns the first `name="value"` match (raw, span-preserving) plus a
+/// `DuplicateAttribute` diagnostic for every repeat (recovery rule 3:
+/// first value wins).
+fn attr_value_spanned(
+    source: &str,
+    attrs: &[RawAttr],
+    name: &[u8],
+) -> (Option<Spanned<String>>, Vec<Diagnostic>) {
+    let bytes = source.as_bytes();
+    let mut matches = attrs.iter().filter(|a| &bytes[a.name.0..a.name.1] == name);
+
+    let first = matches.next().map(|attr| Spanned {
         value: source[attr.value.0..attr.value.1].to_string(),
         span: ByteSpan {
             start: attr.value.0 as u32,
@@ -129,17 +371,14 @@ fn mapper_with_namespace(
                 start: dup.name.0 as u32,
                 end: dup.name.1 as u32,
             }),
-            message: "duplicate 'namespace' attribute; first value wins".to_string(),
+            message: format!(
+                "duplicate '{}' attribute; first value wins",
+                String::from_utf8_lossy(name)
+            ),
         })
         .collect();
 
-    let mapper = Mapper {
-        namespace,
-        statements: Vec::new(),
-        fragments: Vec::new(),
-        result_maps: Vec::new(),
-    };
-    (mapper, diagnostics)
+    (first, diagnostics)
 }
 
 /// A raw `name="value"` pair as byte ranges into the original source
@@ -363,5 +602,147 @@ mod tests {
         assert_eq!(&source[start as usize..end as usize], namespace.value);
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(result.diagnostics[0].code, DiagCode::DuplicateAttribute);
+    }
+
+    #[test]
+    fn mm_03_select_statement_is_collected() {
+        let source =
+            r#"<mapper namespace="x"><select id="selectWidget">SELECT 1</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        let stmt = &mapper.statements[0];
+        assert_eq!(stmt.kind, StatementKind::Select);
+        let id = stmt.id.as_ref().expect("id present");
+        assert_eq!(id.value, "selectWidget");
+        let ByteSpan { start, end } = id.span;
+        assert_eq!(&source[start as usize..end as usize], id.value);
+    }
+
+    #[test]
+    fn mm_03_multiple_statement_kinds_collected_in_order() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1</select>
+            <insert id="b">INSERT 1</insert>
+            <update id="c">UPDATE 1</update>
+            <delete id="d">DELETE 1</delete>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let kinds: Vec<_> = mapper.statements.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StatementKind::Select,
+                StatementKind::Insert,
+                StatementKind::Update,
+                StatementKind::Delete,
+            ]
+        );
+        let ids: Vec<_> = mapper
+            .statements
+            .iter()
+            .map(|s| s.id.as_ref().unwrap().value.clone())
+            .collect();
+        assert_eq!(ids, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn mm_03_ibatis_procedure_and_generic_statement_tags() {
+        let source = r#"<sqlMap>
+            <procedure id="callProc">{call proc()}</procedure>
+            <statement id="genericOne">SELECT 1</statement>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let kinds: Vec<_> = mapper.statements.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![StatementKind::Procedure, StatementKind::Generic]
+        );
+    }
+
+    #[test]
+    fn mm_03_missing_id_yields_diagnostic() {
+        let source = r#"<mapper namespace="x"><select>SELECT 1</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert!(mapper.statements[0].id.is_none());
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::MissingStatementId));
+    }
+
+    #[test]
+    fn mm_03_duplicate_statement_id_both_preserved_with_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <select id="dup">SELECT 1</select>
+            <select id="dup">SELECT 2</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "dup");
+        assert_eq!(mapper.statements[1].id.as_ref().unwrap().value, "dup");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::DuplicateStatementId)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn mm_03_database_id_branch_is_not_flagged_as_duplicate() {
+        let source = r#"<mapper namespace="x">
+            <select id="dup" databaseId="oracle">SELECT 1 FROM dual</select>
+            <select id="dup" databaseId="mysql">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn mm_03_nested_dynamic_tags_do_not_break_statement_boundary() {
+        let source = r#"<mapper namespace="x">
+            <select id="withIf">
+                SELECT 1
+                <if test="a != null">
+                    <choose>
+                        <when test="b">AND b = #{b}</when>
+                    </choose>
+                </if>
+            </select>
+            <select id="afterNesting">SELECT 2</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let ids: Vec<_> = mapper
+            .statements
+            .iter()
+            .map(|s| s.id.as_ref().unwrap().value.clone())
+            .collect();
+        assert_eq!(ids, vec!["withIf", "afterNesting"]);
+    }
+
+    #[test]
+    fn mm_03_full_statement_collection_snapshot() {
+        let source = r#"<mapper namespace="com.example.WidgetMapper">
+            <select id="selectWidget" databaseId="oracle">SELECT 1 FROM dual</select>
+            <select id="selectWidget" databaseId="mysql">SELECT 1</select>
+            <insert id="insertWidget">INSERT INTO widget VALUES (#{id})</insert>
+            <select id="selectWidget" databaseId="oracle">DUPLICATE BRANCH</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        insta::assert_json_snapshot!(result);
     }
 }
