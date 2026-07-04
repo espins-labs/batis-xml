@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 425
+        },
         "id": {
           "value": "selectWidgetsPaged",
           "span": {

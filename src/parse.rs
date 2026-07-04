@@ -276,6 +276,9 @@ fn build_mapper(
                     let (segments, mut body_diags, truncated) =
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
+                    // Non-empty element: extend the header-only span (set
+                    // in build_statement) to the true subtree end.
+                    statement.span.end = reader.buffer_position() as u32;
 
                     // MM-05: lift top-level <include> markers.
                     let (includes, mut include_diags) = lift_includes(source, dialect, &segments);
@@ -317,8 +320,10 @@ fn build_mapper(
                     let (segments, mut body_diags, truncated) =
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
+                    let subtree_end = reader.buffer_position() as u32;
 
                     if let Some(mut fragment) = fragment {
+                        fragment.span.end = subtree_end;
                         let (includes, mut include_diags) =
                             lift_includes(source, dialect, &segments);
                         diagnostics.append(&mut include_diags);
@@ -362,8 +367,10 @@ fn build_mapper(
                     let (segments, mut body_diags, truncated) =
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
+                    let subtree_end = reader.buffer_position() as u32;
 
                     if let Some(mut result_map) = result_map {
+                        result_map.span.end = subtree_end;
                         collect_mappings(
                             source,
                             &segments,
@@ -536,6 +543,13 @@ fn build_statement(
 
     let statement = Statement {
         kind,
+        // Header-only span for now (self-closed elements never get a body
+        // walk to extend it); build_mapper overwrites `.end` to the true
+        // subtree end for non-empty elements once capture_body finds it.
+        span: ByteSpan {
+            start: tag_start as u32,
+            end: tag_end as u32,
+        },
         id,
         database_id,
         // Placeholder — real SQL text capture lands in MM-08 (CDATA/entities)
@@ -601,6 +615,12 @@ fn build_fragment(
                 });
             }
             Some(SqlFragment {
+                // See build_statement's span comment — overwritten to the
+                // true subtree end for non-empty elements.
+                span: ByteSpan {
+                    start: tag_start as u32,
+                    end: tag_end as u32,
+                },
                 id,
                 // Placeholder, same as Statement.sql — real text lands in
                 // MM-07/MM-06.
@@ -657,6 +677,12 @@ fn build_result_map(
                 });
             }
             Some(ResultMap {
+                // See build_statement's span comment — overwritten to the
+                // true subtree end for non-empty elements.
+                span: ByteSpan {
+                    start: tag_start as u32,
+                    end: tag_end as u32,
+                },
                 id,
                 type_ref,
                 extends,
@@ -2907,5 +2933,75 @@ mod tests {
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.statements.len(), 1);
         assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "a");
+    }
+
+    // --- span field (Statement/SqlFragment/ResultMap): opening-tag start
+    // -> subtree end. Promoted from the CodeGraph swap experiment (friction
+    // #3); no MM number was assigned in the spec, so these aren't mm_-
+    // prefixed like the rest of this module.
+
+    #[test]
+    fn span_covers_statement_opening_tag_through_subtree_end() {
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let expected_start = source.find("<select").unwrap() as u32;
+        let expected_end = source.find("</select>").unwrap() as u32 + "</select>".len() as u32;
+        assert_eq!(
+            mapper.statements[0].span,
+            ByteSpan {
+                start: expected_start,
+                end: expected_end
+            }
+        );
+    }
+
+    #[test]
+    fn span_covers_self_closed_statement_equals_own_tag() {
+        let source = r#"<mapper namespace="x"><select id="a"/></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let expected_start = source.find("<select").unwrap() as u32;
+        let expected_end = source.find("/>").unwrap() as u32 + "/>".len() as u32;
+        assert_eq!(
+            mapper.statements[0].span,
+            ByteSpan {
+                start: expected_start,
+                end: expected_end
+            }
+        );
+    }
+
+    #[test]
+    fn span_covers_sql_fragment_opening_tag_through_subtree_end() {
+        let source = r#"<mapper namespace="x"><sql id="cols">a, b</sql></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let expected_start = source.find("<sql").unwrap() as u32;
+        let expected_end = source.find("</sql>").unwrap() as u32 + "</sql>".len() as u32;
+        assert_eq!(
+            mapper.fragments[0].span,
+            ByteSpan {
+                start: expected_start,
+                end: expected_end
+            }
+        );
+    }
+
+    #[test]
+    fn span_covers_result_map_opening_tag_through_subtree_end() {
+        let source = r#"<mapper namespace="x"><resultMap id="rm" type="Widget"><result column="a" property="a"/></resultMap></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let expected_start = source.find("<resultMap").unwrap() as u32;
+        let expected_end =
+            source.find("</resultMap>").unwrap() as u32 + "</resultMap>".len() as u32;
+        assert_eq!(
+            mapper.result_maps[0].span,
+            ByteSpan {
+                start: expected_start,
+                end: expected_end
+            }
+        );
     }
 }

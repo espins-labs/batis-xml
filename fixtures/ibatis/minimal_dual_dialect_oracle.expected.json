@@ -5,6 +5,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 166,
+          "end": 420
+        },
         "id": {
           "value": "widgetDAO.getWidgetList",
           "span": {

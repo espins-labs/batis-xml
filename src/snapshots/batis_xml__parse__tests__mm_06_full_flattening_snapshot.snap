@@ -15,6 +15,10 @@ expression: result
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 104,
+          "end": 521
+        },
         "id": {
           "value": "selectWidget",
           "span": {
@@ -224,6 +228,10 @@ expression: result
     ],
     "fragments": [
       {
+        "span": {
+          "start": 58,
+          "end": 91
+        },
         "id": {
           "value": "baseCols",
           "span": {

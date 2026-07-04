@@ -5,6 +5,10 @@
     "statements": [
       {
         "kind": "procedure",
+        "span": {
+          "start": 166,
+          "end": 313
+        },
         "id": {
           "value": "widgetDAO.callRecalcWidgetStats",
           "span": {

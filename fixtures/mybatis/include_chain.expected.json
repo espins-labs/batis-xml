@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 349,
+          "end": 525
+        },
         "id": {
           "value": "selectWidgetById",
           "span": {
@@ -85,6 +89,10 @@
     ],
     "fragments": [
       {
+        "span": {
+          "start": 209,
+          "end": 260
+        },
         "id": {
           "value": "auditColumns",
           "span": {
@@ -111,6 +119,10 @@
         "includes": []
       },
       {
+        "span": {
+          "start": 263,
+          "end": 346
+        },
         "id": {
           "value": "baseColumns",
           "span": {

@@ -5,6 +5,10 @@
     "statements": [
       {
         "kind": "generic",
+        "span": {
+          "start": 246,
+          "end": 403
+        },
         "id": {
           "value": "legacyRecalcBatchJob",
           "span": {

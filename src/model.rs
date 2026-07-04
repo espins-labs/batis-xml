@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// spans back against a source file must decode that source the same way
 /// this crate did before slicing.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteSpan {
     pub start: u32,
     pub end: u32,
@@ -111,6 +111,11 @@ pub enum StatementKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Statement {
     pub kind: StatementKind,
+    /// Full original extent of the statement: opening-tag start → subtree
+    /// end (i.e. past its closing tag, or its own end for a self-closed
+    /// element).
+    #[serde(default)]
+    pub span: ByteSpan,
     /// `None` when missing, plus a `MissingStatementId` diagnostic.
     /// Synthesized ids are never invented.
     pub id: Option<Spanned<String>>,
@@ -165,6 +170,9 @@ pub struct SqlString {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlFragment {
+    /// Full original extent: opening-tag start → subtree end.
+    #[serde(default)]
+    pub span: ByteSpan,
     pub id: Spanned<String>,
     pub sql: SqlText,
     /// Nested includes inside the fragment (MM-04).
@@ -201,6 +209,9 @@ pub struct ClassRef {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResultMap {
+    /// Full original extent: opening-tag start → subtree end.
+    #[serde(default)]
+    pub span: ByteSpan,
     pub id: Spanned<String>,
     pub type_ref: Option<Spanned<ClassRef>>,
     pub extends: Option<Spanned<String>>,

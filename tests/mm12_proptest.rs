@@ -11,7 +11,7 @@
 //!    entity decoding could have touched them), the span slices back to
 //!    exactly that value in the original source.
 
-use batis_xml::{Dialect, ParseResult, SqlText};
+use batis_xml::{ByteSpan, Dialect, ParseResult, SqlText};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 
@@ -167,6 +167,16 @@ fn check_span_map_strictly_increasing(span_map: &[(u32, u32)], ctx: &str) {
     );
 }
 
+/// Statement/SqlFragment/ResultMap.span (opening-tag start -> subtree end)
+/// must contain every span nested inside it -- a child pointing outside
+/// its own enclosing tag would mean the offsets are simply wrong.
+fn assert_span_contains(outer: ByteSpan, inner: ByteSpan, ctx: &str) {
+    assert!(
+        outer.start <= inner.start && inner.end <= outer.end,
+        "{ctx}: inner span {inner:?} not contained in outer span {outer:?}"
+    );
+}
+
 /// Walks the whole `ParseResult`, checking invariants 3, 4, and (for
 /// plainly-verbatim-identifier property paths) 5.
 fn check_result(source: &str, result: &ParseResult) {
@@ -187,29 +197,36 @@ fn check_result(source: &str, result: &ParseResult) {
     }
 
     for stmt in &mapper.statements {
+        assert_span_in_range(stmt.span.start, stmt.span.end, len, "statement span");
         if let Some(id) = &stmt.id {
             assert_span_in_range(id.span.start, id.span.end, len, "statement id span");
+            assert_span_contains(stmt.span, id.span, "statement span vs id span");
         }
         if let Some(db) = &stmt.database_id {
             assert_span_in_range(db.span.start, db.span.end, len, "database_id span");
+            assert_span_contains(stmt.span, db.span, "statement span vs database_id span");
         }
         for include in &stmt.includes {
             assert_span_in_range(include.span.start, include.span.end, len, "include span");
+            assert_span_contains(stmt.span, include.span, "statement span vs include span");
         }
         for path in &stmt.property_paths {
             assert_span_in_range(path.span.start, path.span.end, len, "property_path span");
+            assert_span_contains(stmt.span, path.span, "statement span vs property_path span");
             check_verbatim_property_path(source, path);
         }
         check_sql_text(source, &stmt.sql);
     }
 
     for fragment in &mapper.fragments {
+        assert_span_in_range(fragment.span.start, fragment.span.end, len, "fragment span");
         assert_span_in_range(
             fragment.id.span.start,
             fragment.id.span.end,
             len,
             "fragment id span",
         );
+        assert_span_contains(fragment.span, fragment.id.span, "fragment span vs id span");
         for include in &fragment.includes {
             assert_span_in_range(
                 include.span.start,
@@ -217,12 +234,15 @@ fn check_result(source: &str, result: &ParseResult) {
                 len,
                 "fragment include span",
             );
+            assert_span_contains(fragment.span, include.span, "fragment span vs include span");
         }
         check_sql_text(source, &fragment.sql);
     }
 
     for rm in &mapper.result_maps {
+        assert_span_in_range(rm.span.start, rm.span.end, len, "resultMap span");
         assert_span_in_range(rm.id.span.start, rm.id.span.end, len, "resultMap id span");
+        assert_span_contains(rm.span, rm.id.span, "resultMap span vs id span");
     }
 }
 

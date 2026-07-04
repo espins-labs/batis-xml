@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 561
+        },
         "id": {
           "value": "selectWidgetsByStatus",
           "span": {

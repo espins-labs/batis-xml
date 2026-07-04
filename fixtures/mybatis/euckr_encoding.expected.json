@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 266,
+          "end": 465
+        },
         "id": {
           "value": "selectWidgetByGroup",
           "span": {

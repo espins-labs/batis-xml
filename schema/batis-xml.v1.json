@@ -279,6 +279,18 @@
             "$ref": "#/definitions/ColumnMapping"
           }
         },
+        "span": {
+          "description": "Full original extent: opening-tag start → subtree end.",
+          "default": {
+            "end": 0,
+            "start": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteSpan"
+            }
+          ]
+        },
         "type_ref": {
           "anyOf": [
             {
@@ -353,6 +365,18 @@
           "items": {
             "$ref": "#/definitions/Spanned_for_IncludeRef"
           }
+        },
+        "span": {
+          "description": "Full original extent: opening-tag start → subtree end.",
+          "default": {
+            "end": 0,
+            "start": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteSpan"
+            }
+          ]
         },
         "sql": {
           "$ref": "#/definitions/SqlText"
@@ -535,6 +559,18 @@
             },
             {
               "type": "null"
+            }
+          ]
+        },
+        "span": {
+          "description": "Full original extent of the statement: opening-tag start → subtree end (i.e. past its closing tag, or its own end for a self-closed element).",
+          "default": {
+            "end": 0,
+            "start": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteSpan"
             }
           ]
         },

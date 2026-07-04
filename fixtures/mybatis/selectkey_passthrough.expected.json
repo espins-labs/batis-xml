@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "insert",
+        "span": {
+          "start": 209,
+          "end": 492
+        },
         "id": {
           "value": "insertWidget",
           "span": {

@@ -15,6 +15,10 @@ expression: result
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 58,
+          "end": 131
+        },
         "id": {
           "value": "selectWidget",
           "span": {
@@ -53,6 +57,10 @@ expression: result
       },
       {
         "kind": "select",
+        "span": {
+          "start": 144,
+          "end": 206
+        },
         "id": {
           "value": "selectWidget",
           "span": {
@@ -91,6 +99,10 @@ expression: result
       },
       {
         "kind": "insert",
+        "span": {
+          "start": 219,
+          "end": 287
+        },
         "id": {
           "value": "insertWidget",
           "span": {
@@ -135,6 +147,10 @@ expression: result
       },
       {
         "kind": "select",
+        "span": {
+          "start": 300,
+          "end": 371
+        },
         "id": {
           "value": "selectWidget",
           "span": {

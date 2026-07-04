@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 639,
+          "end": 1266
+        },
         "id": {
           "value": "searchWidgets",
           "span": {

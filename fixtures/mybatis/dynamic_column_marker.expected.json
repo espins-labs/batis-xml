@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 409
+        },
         "id": {
           "value": "searchWidgetsBySortColumn",
           "span": {

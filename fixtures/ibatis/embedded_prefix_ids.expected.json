@@ -5,6 +5,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 166,
+          "end": 328
+        },
         "id": {
           "value": "widgetDAO.getWidget",
           "span": {
@@ -65,6 +69,10 @@
       },
       {
         "kind": "select",
+        "span": {
+          "start": 331,
+          "end": 485
+        },
         "id": {
           "value": "orderDAO.getOrder",
           "span": {
@@ -125,6 +133,10 @@
       },
       {
         "kind": "update",
+        "span": {
+          "start": 488,
+          "end": 627
+        },
         "id": {
           "value": "orderDAO.updateOrderStatus",
           "span": {

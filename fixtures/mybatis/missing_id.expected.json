@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 323
+        },
         "id": null,
         "database_id": null,
         "sql": {

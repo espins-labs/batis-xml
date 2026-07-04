@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 444
+        },
         "id": {
           "value": "searchWidgetsByKeyword",
           "span": {

@@ -11,6 +11,10 @@
     "statements": [
       {
         "kind": "update",
+        "span": {
+          "start": 209,
+          "end": 434
+        },
         "id": {
           "value": "updateWidget",
           "span": {

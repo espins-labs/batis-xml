@@ -12,6 +12,10 @@
     "fragments": [],
     "result_maps": [
       {
+        "span": {
+          "start": 209,
+          "end": 618
+        },
         "id": {
           "value": "widgetResultMap",
           "span": {
@@ -45,6 +49,10 @@
         ]
       },
       {
+        "span": {
+          "start": 621,
+          "end": 788
+        },
         "id": {
           "value": "widgetAResultMap",
           "span": {
