@@ -134,7 +134,14 @@ pub(crate) fn normalize_segment(
             // delimiter actually exists in this segment — `#`/`$` are also
             // ordinary SQL/comment characters (monetary literals, etc.), and
             // misfiring here would spam diagnostics on every one of them.
-            if let Some(close) = find_byte(bytes, i + 1, delim) {
+            // A property path never contains whitespace, so two unrelated
+            // bare delimiters (e.g. two monetary literals: "$100 ... $200")
+            // must not pair up and swallow the SQL between them.
+            if let Some(close) = find_byte(bytes, i + 1, delim).filter(|&close| {
+                !decoded[i + 1..close]
+                    .bytes()
+                    .any(|b| b.is_ascii_whitespace())
+            }) {
                 normalized.push_str(&decoded[copy_start..i]);
                 let content = &decoded[i + 1..close];
                 push_path(
@@ -381,6 +388,28 @@ mod tests {
     #[test]
     fn mm_07_lone_dollar_without_closing_delimiter_is_left_untouched_no_diagnostic() {
         let decoded = "cost is $5 today";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
+        assert_eq!(result.text, decoded);
+        assert!(result.property_paths.is_empty());
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn mm_07_two_bare_dollars_with_whitespace_between_are_not_paired_as_placeholder() {
+        // Two monetary literals in one segment: a naive "next matching
+        // delimiter" scan would pair them up and swallow real SQL
+        // ("100 AND fee < ") as a bogus placeholder "path". Whitespace in
+        // the would-be content means it's not a legacy placeholder at all.
+        let decoded = "price > $100 AND fee < $200";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
+        assert_eq!(result.text, decoded);
+        assert!(result.property_paths.is_empty());
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn mm_07_two_bare_hashes_with_whitespace_between_are_not_paired_as_placeholder() {
+        let decoded = "price > #100 AND fee < #200";
         let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
         assert_eq!(result.text, decoded);
         assert!(result.property_paths.is_empty());
