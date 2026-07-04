@@ -344,6 +344,12 @@ fn build_mapper(
                     continue;
                 }
 
+                // MM-11: iBatis <parameterMap> has no corresponding model
+                // field (the public model is final) — it falls through to
+                // the generic skip_subtree below like any other
+                // unrecognized element. Documented limitation, not a bug:
+                // consumers that need parameterMap data aren't served by
+                // this crate today.
                 if local_name == b"resultMap" {
                     let (result_map, mut diags) = build_result_map(
                         source,
@@ -635,7 +641,8 @@ fn build_result_map(
 ) -> (Option<ResultMap>, Vec<Diagnostic>) {
     let attrs = scan_attributes(source.as_bytes(), tag_start, tag_end);
     let (id, mut diagnostics) = attr_value_spanned(source, &attrs, b"id");
-    let (type_ref, mut type_diags) = read_class_ref(source, &attrs, &[b"type"]);
+    // MM-11: iBatis <resultMap> uses class=, MyBatis uses type=.
+    let (type_ref, mut type_diags) = read_class_ref(source, &attrs, &[b"type", b"class"]);
     diagnostics.append(&mut type_diags);
     let (extends, mut extends_diags) = attr_value_spanned(source, &attrs, b"extends");
     diagnostics.append(&mut extends_diags);
@@ -2849,5 +2856,56 @@ mod tests {
         // Whatever was parsed before the malformed markup is preserved.
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.statements.len(), 1);
+    }
+
+    #[test]
+    fn mm_11_ibatis_resultmap_class_attribute_read_as_type_ref() {
+        // iBatis <resultMap> uses class= where MyBatis uses type=.
+        let source = r#"<sqlMap>
+            <resultMap id="widgetResult" class="widget">
+                <result column="widget_id" property="id"/>
+            </resultMap>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 1);
+        assert_eq!(
+            mapper.result_maps[0].type_ref.as_ref().unwrap().value.raw,
+            "widget"
+        );
+    }
+
+    #[test]
+    fn mm_11_mybatis_resultmap_type_attribute_still_works() {
+        // Locks that MM-11's class= addition didn't regress MyBatis's
+        // type= (MM-10's original behavior).
+        let source = r#"<mapper namespace="x">
+            <resultMap id="widgetResult" type="com.example.Widget">
+                <result column="widget_id" property="id"/>
+            </resultMap>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.result_maps[0].type_ref.as_ref().unwrap().value.raw,
+            "com.example.Widget"
+        );
+    }
+
+    #[test]
+    fn mm_11_parameter_map_has_no_model_field_but_does_not_break_parsing() {
+        // Documented limitation: <parameterMap> isn't captured anywhere
+        // (the model is final, no field for it) — it must not prevent
+        // sibling statements from parsing normally.
+        let source = r#"<sqlMap>
+            <parameterMap id="widgetParam" class="widget">
+                <parameter property="id"/>
+            </parameterMap>
+            <select id="a" parameterMap="widgetParam">SELECT 1</select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "a");
     }
 }
