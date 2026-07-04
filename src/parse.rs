@@ -21,10 +21,32 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::HashSet;
 
+/// Per-spec cap (10 MB) on input handed to the parser — oversize input is
+/// absorbed as `mapper: None` + `OversizeInput` rather than attempting to
+/// tokenize an arbitrarily large document.
+const OVERSIZE_LIMIT: usize = 10 * 1024 * 1024;
+
 /// MM-01: identifies the root element and derives the dialect from its
 /// name (`<mapper>` → MyBatis, `<sqlMap>` → iBatis).
 pub(crate) fn parse_str(source: &str) -> ParseResult {
+    if source.len() > OVERSIZE_LIMIT {
+        return ParseResult {
+            dialect: Dialect::Unknown,
+            mapper: None,
+            diagnostics: vec![Diagnostic {
+                code: DiagCode::OversizeInput,
+                span: None,
+                message: format!(
+                    "input is {} bytes, over the {OVERSIZE_LIMIT}-byte cap",
+                    source.len()
+                ),
+            }],
+        };
+    }
+
     let mut reader = Reader::from_str(source);
+    let mut diagnostics = Vec::new();
+    let mut last_err_pos = None;
 
     loop {
         let start = reader.buffer_position();
@@ -39,23 +61,22 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 };
                 return match dialect {
                     Some(dialect) => {
-                        let (mapper, diagnostics) = build_mapper(
+                        let (mapper, mut mapper_diags) = build_mapper(
                             source,
                             &mut reader,
                             start as usize,
                             end as usize,
                             dialect,
                         );
+                        diagnostics.append(&mut mapper_diags);
                         ParseResult {
                             dialect,
                             mapper: Some(mapper),
                             diagnostics,
                         }
                     }
-                    None => ParseResult {
-                        dialect: Dialect::Unknown,
-                        mapper: None,
-                        diagnostics: vec![Diagnostic {
+                    None => {
+                        diagnostics.push(Diagnostic {
                             code: DiagCode::UnknownElement,
                             span: Some(ByteSpan {
                                 start: start as u32,
@@ -65,8 +86,13 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                                 "root element <{}> is not a mapper/sqlMap",
                                 String::from_utf8_lossy(name.as_ref())
                             ),
-                        }],
-                    },
+                        });
+                        ParseResult {
+                            dialect: Dialect::Unknown,
+                            mapper: None,
+                            diagnostics,
+                        }
+                    }
                 };
             }
             Ok(Event::Empty(tag)) => {
@@ -75,8 +101,9 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 let name = name.as_ref();
                 return match name {
                     b"mapper" => {
-                        let (mapper, diagnostics) =
+                        let (mapper, mut mapper_diags) =
                             mapper_with_namespace(source, start as usize, end as usize);
+                        diagnostics.append(&mut mapper_diags);
                         ParseResult {
                             dialect: Dialect::Mybatis,
                             mapper: Some(mapper),
@@ -84,18 +111,17 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         }
                     }
                     b"sqlMap" => {
-                        let (mapper, diagnostics) =
+                        let (mapper, mut mapper_diags) =
                             mapper_with_namespace(source, start as usize, end as usize);
+                        diagnostics.append(&mut mapper_diags);
                         ParseResult {
                             dialect: Dialect::Ibatis,
                             mapper: Some(mapper),
                             diagnostics,
                         }
                     }
-                    other => ParseResult {
-                        dialect: Dialect::Unknown,
-                        mapper: None,
-                        diagnostics: vec![Diagnostic {
+                    other => {
+                        diagnostics.push(Diagnostic {
                             code: DiagCode::UnknownElement,
                             span: Some(ByteSpan {
                                 start: start as u32,
@@ -105,35 +131,51 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                                 "root element <{}> is not a mapper/sqlMap",
                                 String::from_utf8_lossy(other)
                             ),
-                        }],
-                    },
+                        });
+                        ParseResult {
+                            dialect: Dialect::Unknown,
+                            mapper: None,
+                            diagnostics,
+                        }
+                    }
                 };
             }
             Ok(Event::Eof) => {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::UnknownElement,
+                    span: None,
+                    message: "no root element found".to_string(),
+                });
                 return ParseResult {
                     dialect: Dialect::Unknown,
                     mapper: None,
-                    diagnostics: vec![Diagnostic {
-                        code: DiagCode::UnknownElement,
-                        span: None,
-                        message: "no root element found".to_string(),
-                    }],
+                    diagnostics,
                 };
             }
             Err(err) => {
                 let pos = reader.error_position();
-                return ParseResult {
-                    dialect: Dialect::Unknown,
-                    mapper: None,
-                    diagnostics: vec![Diagnostic {
-                        code: DiagCode::UnclosedTag,
-                        span: Some(ByteSpan {
-                            start: pos as u32,
-                            end: pos as u32,
-                        }),
-                        message: format!("XML parse error: {err}"),
-                    }],
-                };
+                // Recovery rules 2/4: quick-xml's tokenizer has already
+                // advanced past the offending bytes by the time it returns
+                // an error (verified: the next read_event() picks up at
+                // the next recognizable token) — so recovering is just "do
+                // not treat this as fatal", not manual byte-scanning for
+                // the next `<`. Only bail if we're stuck at the same
+                // position (defends the "no infinite loop" invariant
+                // against any future quick-xml edge case).
+                if last_err_pos == Some(pos) {
+                    diagnostics.push(unclosed_tag(
+                        pos as usize,
+                        pos as usize,
+                        format!("XML parse error (unrecoverable): {err}"),
+                    ));
+                    return ParseResult {
+                        dialect: Dialect::Unknown,
+                        mapper: None,
+                        diagnostics,
+                    };
+                }
+                last_err_pos = Some(pos);
+                diagnostics.push(recovery_diagnostic(&err, pos));
             }
             _ => continue,
         }
@@ -181,6 +223,7 @@ fn build_mapper(
     let mut seen_ids: HashSet<(String, Option<String>)> = HashSet::new();
     let mut seen_fragment_ids: HashSet<String> = HashSet::new();
     let mut seen_result_map_ids: HashSet<String> = HashSet::new();
+    let mut last_err_pos = None;
 
     loop {
         let child_start = reader.buffer_position();
@@ -195,12 +238,21 @@ fn build_mapper(
                 break;
             }
             Err(err) => {
-                diagnostics.push(unclosed_tag(
-                    child_start as usize,
-                    source.len(),
-                    format!("XML parse error: {err}"),
-                ));
-                break;
+                let pos = reader.error_position();
+                // See parse_str's Err arm: quick-xml already resynchronized
+                // internally by the time it returns the error (recovery
+                // rules 2/4) — only bail if genuinely stuck.
+                if last_err_pos == Some(pos) {
+                    diagnostics.push(unclosed_tag(
+                        pos as usize,
+                        source.len(),
+                        format!("XML parse error (unrecoverable): {err}"),
+                    ));
+                    break;
+                }
+                last_err_pos = Some(pos);
+                diagnostics.push(recovery_diagnostic(&err, pos));
+                continue;
             }
             Ok(Event::Start(tag)) => {
                 let tag_end = reader.buffer_position();
@@ -320,7 +372,7 @@ fn build_mapper(
                     continue;
                 }
 
-                match skip_subtree(reader) {
+                match skip_subtree(reader, &mut diagnostics) {
                     SkipOutcome::Eof => {
                         diagnostics.push(unclosed_tag(
                             child_start as usize,
@@ -804,10 +856,16 @@ enum SkipOutcome {
 }
 
 /// Consumes events until the `End` that matches the `Start` the caller just
-/// read (simple depth counting — assumes well-nested input; hostile/
-/// malformed nesting is refined in MM-13).
-fn skip_subtree(reader: &mut Reader<&[u8]>) -> SkipOutcome {
+/// read (simple depth counting — assumes well-nested input for the
+/// *matching*, but tolerates recoverable reader errors along the way:
+/// recovery rules 2/4 mean an orphan/mismatched closing tag or other
+/// malformed markup doesn't abort the skip, just gets diagnosed and
+/// skipped over). `SkipOutcome::Err` is reserved for the reader getting
+/// stuck at the same byte position twice in a row (defends the
+/// "no infinite loop" invariant; not expected in practice).
+fn skip_subtree(reader: &mut Reader<&[u8]>, diagnostics: &mut Vec<Diagnostic>) -> SkipOutcome {
     let mut depth = 1u32;
+    let mut last_err_pos = None;
     loop {
         match reader.read_event() {
             Ok(Event::Start(_)) => depth += 1,
@@ -818,7 +876,14 @@ fn skip_subtree(reader: &mut Reader<&[u8]>) -> SkipOutcome {
                 }
             }
             Ok(Event::Eof) => return SkipOutcome::Eof,
-            Err(err) => return SkipOutcome::Err(err),
+            Err(err) => {
+                let pos = reader.error_position();
+                if last_err_pos == Some(pos) {
+                    return SkipOutcome::Err(err);
+                }
+                last_err_pos = Some(pos);
+                diagnostics.push(recovery_diagnostic(&err, pos));
+            }
             _ => {}
         }
     }
@@ -834,6 +899,29 @@ fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnos
         }),
         message: message.into(),
     }
+}
+
+/// MM-13: classifies a reader error for a recovery diagnostic. No new
+/// `DiagCode` is warranted for this — `UnclosedTag` already covers "the
+/// tag structure around here is broken"; only the message differs between
+/// recovery rule 2 (orphan/mismatched closing tag — ignored, parsing
+/// continues) and rule 4 (other malformed markup — quick-xml's tokenizer
+/// has already resynchronized to the next recognizable token by the time
+/// it returns the error).
+fn recovery_diagnostic(err: &quick_xml::Error, pos: u64) -> Diagnostic {
+    let is_orphan_close = matches!(
+        err,
+        quick_xml::Error::IllFormed(
+            quick_xml::errors::IllFormedError::UnmatchedEndTag(_)
+                | quick_xml::errors::IllFormedError::MismatchedEndTag { .. }
+        )
+    );
+    let message = if is_orphan_close {
+        format!("orphan or mismatched closing tag ignored: {err}")
+    } else {
+        format!("malformed markup skipped, resynchronizing: {err}")
+    };
+    unclosed_tag(pos as usize, pos as usize, message)
 }
 
 /// MM-08: one run of decoded text plus the raw (still-escaped) byte span it
@@ -865,6 +953,7 @@ pub(crate) fn capture_body(
 ) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
     let mut segments = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut last_err_pos = None;
 
     loop {
         let child_start = reader.buffer_position();
@@ -879,12 +968,18 @@ pub(crate) fn capture_body(
                 return (segments, diagnostics, true);
             }
             Err(err) => {
-                diagnostics.push(unclosed_tag(
-                    child_start as usize,
-                    source.len(),
-                    format!("XML parse error in statement body: {err}"),
-                ));
-                return (segments, diagnostics, true);
+                let pos = reader.error_position();
+                // Recovery rules 2/4 — see parse_str's Err arm.
+                if last_err_pos == Some(pos) {
+                    diagnostics.push(unclosed_tag(
+                        pos as usize,
+                        source.len(),
+                        format!("XML parse error in statement body (unrecoverable): {err}"),
+                    ));
+                    return (segments, diagnostics, true);
+                }
+                last_err_pos = Some(pos);
+                diagnostics.push(recovery_diagnostic(&err, pos));
             }
             Ok(Event::Text(text)) => {
                 let end = reader.buffer_position() as usize;
@@ -926,7 +1021,7 @@ pub(crate) fn capture_body(
             }
             Ok(Event::Start(tag)) => {
                 let name = String::from_utf8_lossy(tag.local_name().as_ref()).into_owned();
-                match skip_subtree(reader) {
+                match skip_subtree(reader, &mut diagnostics) {
                     SkipOutcome::Closed => {
                         let end = reader.buffer_position();
                         segments.push(BodySegment::DynamicTag {
@@ -1114,7 +1209,12 @@ pub(crate) fn scan_attributes(bytes: &[u8], tag_start: usize, tag_end: usize) ->
             i += 1;
         }
         if i >= tag_end || bytes[i] != b'=' {
-            break; // malformed attribute syntax — stop rather than misparse
+            // MM-13: a bare valueless attribute (e.g. legacy HTML-ism, or
+            // just malformed markup) — skip it and keep scanning for real
+            // attributes rather than abandoning the whole tag's worth of
+            // them. `i` is already past the bare name, at the start of
+            // whatever comes next.
+            continue;
         }
         i += 1;
         while i < tag_end && bytes[i].is_ascii_whitespace() {
@@ -1209,7 +1309,12 @@ mod tests {
         let result = parse_str(source);
         assert_eq!(result.dialect, Dialect::Unknown);
         assert!(result.mapper.is_none());
-        assert_eq!(result.diagnostics.len(), 1);
+        // MM-13: the reader error is now recoverable (doesn't abort
+        // immediately), so parsing continues to genuine EOF and diagnoses
+        // that too — two diagnostics, not a silent single failure.
+        assert_eq!(result.diagnostics.len(), 2);
+        assert_eq!(result.diagnostics[0].code, DiagCode::UnclosedTag);
+        assert_eq!(result.diagnostics[1].code, DiagCode::UnknownElement);
     }
 
     #[test]
@@ -2676,5 +2781,73 @@ mod tests {
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.result_maps.len(), 1);
         assert!(mapper.result_maps[0].mappings.is_empty());
+    }
+
+    #[test]
+    fn mm_13_orphan_closing_tag_ignored_and_parsing_continues() {
+        // Recovery rule 2: an orphan/mismatched closing tag doesn't abort
+        // parsing — both statements (before AND after the bad tag) must
+        // survive, with a diagnostic for the malformed structure.
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select></wrongclose><select id="b">SELECT 2</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let ids: Vec<_> = mapper
+            .statements
+            .iter()
+            .map(|s| s.id.as_ref().unwrap().value.clone())
+            .collect();
+        assert_eq!(ids, vec!["a", "b"]);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::UnclosedTag));
+    }
+
+    #[test]
+    fn mm_13_bare_valueless_attribute_skipped_not_fatal_to_scan() {
+        // The deferred MM-02 item: a bare valueless attribute used to stop
+        // the whole attribute scan, losing every attribute after it.
+        let source = r#"<mapper foo namespace="x"></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.namespace.as_ref().unwrap().value, "x");
+    }
+
+    #[test]
+    fn mm_13_oversize_input_yields_oversize_diagnostic() {
+        let huge = "x".repeat(OVERSIZE_LIMIT + 1);
+        let source = format!("<mapper namespace=\"x\"><select id=\"a\">{huge}</select></mapper>");
+        let result = parse_str(&source);
+        assert!(result.mapper.is_none());
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, DiagCode::OversizeInput);
+    }
+
+    #[test]
+    fn mm_13_under_cap_input_parses_normally() {
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select></mapper>"#;
+        assert!(source.len() < OVERSIZE_LIMIT);
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::OversizeInput));
+    }
+
+    #[test]
+    fn mm_13_malformed_bang_markup_does_not_panic_and_diagnoses() {
+        // Recovery rule 4: quick-xml's own tokenizer sometimes only
+        // manages to resynchronize as far as EOF for certain malformed
+        // constructs (verified: invalid "<!...>" markup) — the hard
+        // invariant is no panic and no silent failure, not necessarily
+        // full recovery of everything after it.
+        let source =
+            r#"<mapper namespace="x"><select id="a">before<!weird>after</select></mapper>"#;
+        let result = parse_str(source);
+        assert!(!result.diagnostics.is_empty());
+        // Whatever was parsed before the malformed markup is preserved.
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
     }
 }

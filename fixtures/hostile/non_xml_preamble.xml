@@ -1,0 +1,9 @@
+Legacy deploy log — build #4821 succeeded at 02:14:03
+WARN: stale lock file removed before checkout
+------------------------------------------------------
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.broken.PreambleMapper">
+  <select id="afterPreamble" resultType="map">SELECT 1</select>
+</mapper>
