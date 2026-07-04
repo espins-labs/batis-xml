@@ -43,3 +43,14 @@ pub fn parse_bytes(bytes: &[u8]) -> ParseResult {
     result.diagnostics = diags;
     result
 }
+
+/// Cheap dialect pre-check: decodes (same encoding detection as
+/// [`parse_bytes`]) and identifies the root element only — no statement/
+/// fragment/resultMap capture, no dynamic-SQL flattening. Guaranteed to
+/// agree with `parse_bytes(bytes).dialect` (see the contract test in
+/// `tests/conformance.rs`), so callers can bucket files by dialect without
+/// paying for a full parse first.
+pub fn detect_dialect(bytes: &[u8]) -> Dialect {
+    let (source, _diags) = encoding::decode(bytes);
+    parse::detect_dialect_str(&source)
+}

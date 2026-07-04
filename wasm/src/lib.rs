@@ -18,6 +18,20 @@ pub fn parse(bytes: &[u8]) -> String {
     serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string())
 }
 
+/// Cheap dialect pre-check (MM-01 logic only, no statement/fragment/
+/// resultMap capture or flattening) -- returns the plain string
+/// (`"mybatis"` / `"ibatis"` / `"unknown"`, matching the schema's enum
+/// spelling), not a JSON-quoted one: unlike `parse`, this returns a single
+/// scalar with no nested model to keep schema-faithful, so there's no
+/// reason to make callers `JSON.parse` it. Guaranteed to agree with
+/// `parse(bytes)`'s `dialect` field (see the core crate's contract test).
+#[wasm_bindgen]
+pub fn detect(bytes: &[u8]) -> String {
+    let dialect = batis_xml::detect_dialect(bytes);
+    let json = serde_json::to_string(&dialect).unwrap_or_else(|_| "\"unknown\"".to_string());
+    json.trim_matches('"').to_string()
+}
+
 /// This crate's version, from `Cargo.toml`.
 #[wasm_bindgen]
 pub fn version() -> String {

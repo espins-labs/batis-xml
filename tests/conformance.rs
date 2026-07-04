@@ -52,6 +52,41 @@ fn conformance_ibatis() {
     run_dir("ibatis");
 }
 
+/// Contract: `detect_dialect` (MM-01-only cheap pre-check) must agree with
+/// the full `parse_bytes`'s dialect for every file in the conformance
+/// corpus -- the whole point of the cheap path is that callers can trust
+/// it instead of paying for a full parse.
+#[test]
+fn detect_dialect_agrees_with_full_parse_across_corpus() {
+    let mut checked = 0;
+    for dir in ["mybatis", "ibatis"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join(dir);
+        for entry in fs::read_dir(&root).expect("fixture dir exists") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("xml") {
+                continue;
+            }
+            let bytes = fs::read(&path).expect("read fixture xml");
+            let full_dialect = batis_xml::parse_bytes(&bytes).dialect;
+            let quick_dialect = batis_xml::detect_dialect(&bytes);
+            assert_eq!(
+                quick_dialect,
+                full_dialect,
+                "detect_dialect disagrees with parse_bytes for {}",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    println!("detect_dialect contract: {checked} files checked");
+    assert!(
+        checked > 0,
+        "no fixtures found to check the detect_dialect contract"
+    );
+}
+
 /// The hostile set checks an invariant rather than conformance: parsing
 /// must never panic.
 #[test]

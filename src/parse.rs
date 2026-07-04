@@ -182,6 +182,46 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
     }
 }
 
+/// Cheap dialect pre-check (MM-01 logic only): scans for the root
+/// element's name and returns the corresponding dialect, without capturing
+/// statement bodies, fragments, resultMaps, or flattening dynamic SQL.
+/// Applies the same oversize gate as `parse_str` for exact parity with
+/// `parse_str`'s dialect on oversize input -- see `detect_dialect`'s
+/// contract test (must agree with the full parse's dialect across the
+/// entire conformance corpus).
+pub(crate) fn detect_dialect_str(source: &str) -> Dialect {
+    if source.len() > OVERSIZE_LIMIT {
+        return Dialect::Unknown;
+    }
+
+    let mut reader = Reader::from_str(source);
+    let mut last_err_pos = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(tag)) | Ok(Event::Empty(tag)) => {
+                return match tag.local_name().as_ref() {
+                    b"mapper" => Dialect::Mybatis,
+                    b"sqlMap" => Dialect::Ibatis,
+                    _ => Dialect::Unknown,
+                };
+            }
+            Ok(Event::Eof) => return Dialect::Unknown,
+            Err(err) => {
+                let pos = reader.error_position();
+                // Same stuck-guard as parse_str's Err arm: quick-xml has
+                // already resynchronized past recoverable errors by the
+                // time it returns one, so only bail if genuinely stuck.
+                if last_err_pos == Some(pos) {
+                    return Dialect::Unknown;
+                }
+                last_err_pos = Some(pos);
+                let _ = err;
+            }
+            _ => continue,
+        }
+    }
+}
+
 /// MM-02: extracts the `namespace` attribute from the root tag's raw byte
 /// range `[tag_start, tag_end)`. Missing attribute (iBatis no-namespace
 /// mode) yields `None`; no synthesis. A duplicate `namespace` attribute
