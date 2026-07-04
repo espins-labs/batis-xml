@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetSearchMapper">
+  <!--
+    Synthetic reproduction of a real corpus pattern (K-1 measurement,
+    2026-07-04): admin/reporting search screens commonly stack many
+    independent optional filter conditions in one <where>. Six
+    independent <if>s here give 2^6 = 64 combinations, over the
+    BRANCH_LIMIT (32) cap — this is expected to fall back to
+    SqlText::Union plus a BranchLimitExceeded diagnostic, not a parser
+    defect.
+  -->
+  <select id="searchWidgets" parameterType="map" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name
+    FROM demo_widget
+    <where>
+      <if test="widgetName != null">AND widget_name LIKE #{widgetName}</if>
+      <if test="status != null">AND status = #{status}</if>
+      <if test="categoryId != null">AND category_id = #{categoryId}</if>
+      <if test="startDate != null">AND created_at &gt;= #{startDate}</if>
+      <if test="endDate != null">AND created_at &lt;= #{endDate}</if>
+      <if test="ownerId != null">AND owner_id = #{ownerId}</if>
+    </where>
+    ORDER BY widget_id DESC
+  </select>
+</mapper>

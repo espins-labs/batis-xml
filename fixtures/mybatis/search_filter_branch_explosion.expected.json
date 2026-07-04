@@ -1,0 +1,168 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetSearchMapper",
+      "span": {
+        "start": 168,
+        "end": 210
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "searchWidgets",
+          "span": {
+            "start": 651,
+            "end": 664
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "union": {
+            "text": {
+              "text": "\n    SELECT widget_id, widget_name\n    FROM demo_widget\n    \n      AND widget_name LIKE ?\n      AND status = ?\n      AND category_id = ?\n      AND created_at >= ?\n      AND created_at <= ?\n      AND owner_id = ?\n    \n    ORDER BY widget_id DESC\n  ",
+              "span_map": [
+                [
+                  0,
+                  729
+                ],
+                [
+                  60,
+                  796
+                ],
+                [
+                  67,
+                  833
+                ],
+                [
+                  89,
+                  872
+                ],
+                [
+                  96,
+                  905
+                ],
+                [
+                  110,
+                  932
+                ],
+                [
+                  117,
+                  969
+                ],
+                [
+                  136,
+                  1005
+                ],
+                [
+                  143,
+                  1041
+                ],
+                [
+                  162,
+                  1079
+                ],
+                [
+                  169,
+                  1113
+                ],
+                [
+                  188,
+                  1149
+                ],
+                [
+                  195,
+                  1183
+                ],
+                [
+                  211,
+                  1213
+                ],
+                [
+                  216,
+                  1226
+                ]
+              ]
+            },
+            "branch_count": 64
+          }
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 681,
+            "end": 684
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 698,
+            "end": 727
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "widgetName",
+            "span": {
+              "start": 856,
+              "end": 866
+            }
+          },
+          {
+            "value": "status",
+            "span": {
+              "start": 920,
+              "end": 926
+            }
+          },
+          {
+            "value": "categoryId",
+            "span": {
+              "start": 989,
+              "end": 999
+            }
+          },
+          {
+            "value": "startDate",
+            "span": {
+              "start": 1041,
+              "end": 1041
+            }
+          },
+          {
+            "value": "endDate",
+            "span": {
+              "start": 1113,
+              "end": 1113
+            }
+          },
+          {
+            "value": "ownerId",
+            "span": {
+              "start": 1200,
+              "end": 1207
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": [
+    {
+      "code": "branch_limit_exceeded",
+      "span": null,
+      "message": "branch combinations (64+) exceed the cap of 32; falling back to a union of all branch text"
+    }
+  ]
+}
