@@ -177,25 +177,19 @@ fn build_mapper(
         match reader.read_event() {
             Ok(Event::End(_)) => break, // root closed
             Ok(Event::Eof) => {
-                diagnostics.push(Diagnostic {
-                    code: DiagCode::UnclosedTag,
-                    span: Some(ByteSpan {
-                        start: root_start as u32,
-                        end: source.len() as u32,
-                    }),
-                    message: "root element was never closed".to_string(),
-                });
+                diagnostics.push(unclosed_tag(
+                    root_start,
+                    source.len(),
+                    "root element was never closed",
+                ));
                 break;
             }
             Err(err) => {
-                diagnostics.push(Diagnostic {
-                    code: DiagCode::UnclosedTag,
-                    span: Some(ByteSpan {
-                        start: child_start as u32,
-                        end: source.len() as u32,
-                    }),
-                    message: format!("XML parse error: {err}"),
-                });
+                diagnostics.push(unclosed_tag(
+                    child_start as usize,
+                    source.len(),
+                    format!("XML parse error: {err}"),
+                ));
                 break;
             }
             Ok(Event::Start(tag)) => {
@@ -211,28 +205,34 @@ fn build_mapper(
                     );
                     diagnostics.append(&mut diags);
                     statements.push(statement);
+
+                    // MM-08: walks the body for span-preserving text/CDATA
+                    // segments (also finds the matching End, like
+                    // skip_subtree). Segments feed MM-06/07 assembly later;
+                    // Statement.sql stays a placeholder until then.
+                    let (_segments, mut body_diags, truncated) =
+                        capture_body(source, reader, child_start as usize);
+                    diagnostics.append(&mut body_diags);
+                    if truncated {
+                        break;
+                    }
+                    continue;
                 }
                 match skip_subtree(reader) {
                     SkipOutcome::Eof => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagCode::UnclosedTag,
-                            span: Some(ByteSpan {
-                                start: child_start as u32,
-                                end: source.len() as u32,
-                            }),
-                            message: "element was never closed".to_string(),
-                        });
+                        diagnostics.push(unclosed_tag(
+                            child_start as usize,
+                            source.len(),
+                            "element was never closed",
+                        ));
                         break;
                     }
                     SkipOutcome::Err(err) => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagCode::UnclosedTag,
-                            span: Some(ByteSpan {
-                                start: child_start as u32,
-                                end: source.len() as u32,
-                            }),
-                            message: format!("XML parse error while skipping element: {err}"),
-                        });
+                        diagnostics.push(unclosed_tag(
+                            child_start as usize,
+                            source.len(),
+                            format!("XML parse error while skipping element: {err}"),
+                        ));
                         break;
                     }
                     SkipOutcome::Closed => {}
@@ -365,6 +365,159 @@ fn skip_subtree(reader: &mut Reader<&[u8]>) -> SkipOutcome {
             Ok(Event::Eof) => return SkipOutcome::Eof,
             Err(err) => return SkipOutcome::Err(err),
             _ => {}
+        }
+    }
+}
+
+/// Builds an `UnclosedTag` diagnostic spanning `[start, end)`.
+fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnostic {
+    Diagnostic {
+        code: DiagCode::UnclosedTag,
+        span: Some(ByteSpan {
+            start: start as u32,
+            end: end as u32,
+        }),
+        message: message.into(),
+    }
+}
+
+/// MM-08: one run of decoded text plus the raw (still-escaped) byte span it
+/// came from. Per invariant 4, `raw_span` slices back to the *original*
+/// bytes (entities/CDATA markers unresolved); `decoded` is the resolved
+/// value. The two coincide only when the segment has no entities.
+///
+/// Not yet read outside tests: `capture_body`'s caller discards the
+/// segment list until MM-06 (flattening) and MM-07 (placeholder
+/// normalization) land and assemble `SqlText` from it.
+#[allow(dead_code)]
+struct TextSegment {
+    decoded: String,
+    raw_span: ByteSpan,
+}
+
+/// One unit of a statement body, in document order. Dynamic tags
+/// (`<if>`, `<choose>`, iBatis `<isNotEmpty>`, ...) are recorded as opaque
+/// markers — MM-06 will re-walk their span to flatten branches; MM-08 only
+/// needs to not let them break text-segment ordering or span accounting.
+#[allow(dead_code)]
+enum BodySegment {
+    Text(TextSegment),
+    DynamicTag { name: String, span: ByteSpan },
+}
+
+/// Walks a statement body (from just after its own `Start` event to its
+/// matching `End`), collecting [`BodySegment`]s. Returns `true` in the
+/// third slot when input was truncated (EOF/parse error) — the caller
+/// should stop rather than keep reading a reader that already gave up.
+fn capture_body(
+    source: &str,
+    reader: &mut Reader<&[u8]>,
+    tag_start: usize,
+) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
+    let mut segments = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    loop {
+        let child_start = reader.buffer_position();
+        match reader.read_event() {
+            Ok(Event::End(_)) => return (segments, diagnostics, false),
+            Ok(Event::Eof) => {
+                diagnostics.push(unclosed_tag(
+                    tag_start,
+                    source.len(),
+                    "statement body was never closed",
+                ));
+                return (segments, diagnostics, true);
+            }
+            Err(err) => {
+                diagnostics.push(unclosed_tag(
+                    child_start as usize,
+                    source.len(),
+                    format!("XML parse error in statement body: {err}"),
+                ));
+                return (segments, diagnostics, true);
+            }
+            Ok(Event::Text(text)) => {
+                let end = reader.buffer_position() as usize;
+                let raw_span = ByteSpan {
+                    start: child_start as u32,
+                    end: end as u32,
+                };
+                let decoded = match text.unescape() {
+                    Ok(decoded) => decoded.into_owned(),
+                    Err(err) => {
+                        diagnostics.push(Diagnostic {
+                            code: DiagCode::InvalidEntity,
+                            span: Some(raw_span),
+                            message: format!("unresolvable entity reference: {err}"),
+                        });
+                        // Degrade gracefully: keep the raw (still-escaped)
+                        // text rather than dropping the segment.
+                        source[raw_span.start as usize..raw_span.end as usize].to_string()
+                    }
+                };
+                segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
+            }
+            Ok(Event::CData(cdata)) => {
+                let end = reader.buffer_position() as usize;
+                // The event's own span includes the `<![CDATA[`/`]]>`
+                // delimiters (9 and 3 bytes); the segment span is the
+                // inner content only.
+                let inner_start = child_start as usize + 9;
+                let inner_end = end - 3;
+                let raw_span = ByteSpan {
+                    start: inner_start as u32,
+                    end: inner_end as u32,
+                };
+                let decoded = match cdata.decode() {
+                    Ok(decoded) => decoded.into_owned(),
+                    Err(_) => source[inner_start..inner_end].to_string(),
+                };
+                segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
+            }
+            Ok(Event::Start(tag)) => {
+                let name = String::from_utf8_lossy(tag.local_name().as_ref()).into_owned();
+                match skip_subtree(reader) {
+                    SkipOutcome::Closed => {
+                        let end = reader.buffer_position();
+                        segments.push(BodySegment::DynamicTag {
+                            name,
+                            span: ByteSpan {
+                                start: child_start as u32,
+                                end: end as u32,
+                            },
+                        });
+                    }
+                    SkipOutcome::Eof => {
+                        diagnostics.push(unclosed_tag(
+                            child_start as usize,
+                            source.len(),
+                            format!("<{name}> was never closed"),
+                        ));
+                        return (segments, diagnostics, true);
+                    }
+                    SkipOutcome::Err(err) => {
+                        diagnostics.push(unclosed_tag(
+                            child_start as usize,
+                            source.len(),
+                            format!("XML parse error while skipping <{name}>: {err}"),
+                        ));
+                        return (segments, diagnostics, true);
+                    }
+                }
+            }
+            Ok(Event::Empty(tag)) => {
+                let end = reader.buffer_position();
+                let name = String::from_utf8_lossy(tag.local_name().as_ref()).into_owned();
+                segments.push(BodySegment::DynamicTag {
+                    name,
+                    span: ByteSpan {
+                        start: child_start as u32,
+                        end: end as u32,
+                    },
+                });
+            }
+            _ => continue,
         }
     }
 }
@@ -811,5 +964,141 @@ mod tests {
         </mapper>"#;
         let result = parse_str(source);
         insta::assert_json_snapshot!(result);
+    }
+
+    /// Test harness for [`capture_body`]: `source` must be a single element
+    /// whose body is what's under test, e.g. `<select id="x">...</select>`.
+    fn run_capture(source: &str) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
+        let mut reader = Reader::from_str(source);
+        reader.read_event().expect("wrapper start tag");
+        capture_body(source, &mut reader, 0)
+    }
+
+    fn text_decoded(segments: &[BodySegment]) -> Vec<&str> {
+        segments
+            .iter()
+            .map(|s| match s {
+                BodySegment::Text(t) => t.decoded.as_str(),
+                BodySegment::DynamicTag { .. } => panic!("expected a text segment"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mm_08_cdata_with_comparison_operators() {
+        let source = "<select id=\"x\"><![CDATA[ ROWNUM <= 10 ]]></select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert!(diagnostics.is_empty());
+        assert_eq!(segments.len(), 1);
+        let BodySegment::Text(seg) = &segments[0] else {
+            panic!("expected a text segment")
+        };
+        assert!(seg.decoded.contains("<="));
+        assert_eq!(seg.decoded, " ROWNUM <= 10 ");
+        let ByteSpan { start, end } = seg.raw_span;
+        assert_eq!(&source[start as usize..end as usize], seg.decoded);
+    }
+
+    #[test]
+    fn mm_08_split_cdata_concatenates_into_consecutive_segments() {
+        // Encodes the literal "]]>" split across two CDATA sections, the
+        // standard XML escaping trick since CDATA can't contain "]]>"
+        // directly.
+        let source = "<select id=\"x\"><![CDATA[]]]]><![CDATA[>]]></select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert!(diagnostics.is_empty());
+        assert_eq!(text_decoded(&segments), vec!["]]", ">"]);
+        let joined: String = text_decoded(&segments).concat();
+        assert_eq!(joined, "]]>");
+    }
+
+    #[test]
+    fn mm_08_predefined_and_numeric_entities_decoded_raw_span_preserved() {
+        let source = "<select id=\"x\">a &lt;b&gt;&amp;&quot;&apos; &#64; &#x40;</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert!(diagnostics.is_empty());
+        assert_eq!(segments.len(), 1);
+        let BodySegment::Text(seg) = &segments[0] else {
+            panic!("expected a text segment")
+        };
+        assert_eq!(seg.decoded, "a <b>&\"' @ @");
+        let ByteSpan { start, end } = seg.raw_span;
+        assert_eq!(
+            &source[start as usize..end as usize],
+            "a &lt;b&gt;&amp;&quot;&apos; &#64; &#x40;"
+        );
+        assert_ne!(&source[start as usize..end as usize], seg.decoded);
+    }
+
+    #[test]
+    fn mm_08_undefined_entity_degrades_gracefully_with_diagnostic() {
+        let source = "<select id=\"x\">a&nbsp;b</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert_eq!(segments.len(), 1);
+        let BodySegment::Text(seg) = &segments[0] else {
+            panic!("expected a text segment")
+        };
+        // Degrades to the raw (unresolved) text rather than dropping it.
+        assert_eq!(seg.decoded, "a&nbsp;b");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagCode::InvalidEntity);
+    }
+
+    #[test]
+    fn mm_08_undefined_entity_does_not_drop_the_statement() {
+        let source = r#"<mapper namespace="x"><select id="a">a&nbsp;b</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::InvalidEntity));
+    }
+
+    #[test]
+    fn mm_08_whitespace_preserved_verbatim() {
+        let source = "<select id=\"x\">   SELECT 1   </select>";
+        let (segments, _diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert_eq!(text_decoded(&segments), vec!["   SELECT 1   "]);
+    }
+
+    #[test]
+    fn mm_08_mixed_text_and_cdata_segments_in_document_order() {
+        let source = "<select id=\"x\">SELECT 1 <![CDATA[FROM t]]> WHERE 1=1</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            text_decoded(&segments),
+            vec!["SELECT 1 ", "FROM t", " WHERE 1=1"]
+        );
+    }
+
+    #[test]
+    fn mm_08_dynamic_tag_recorded_as_opaque_marker() {
+        let source = "<select id=\"x\">SELECT 1 <if test=\"a\">AND a = #{a}</if> more</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert!(diagnostics.is_empty());
+        assert_eq!(segments.len(), 3);
+        assert!(matches!(&segments[0], BodySegment::Text(t) if t.decoded == "SELECT 1 "));
+        match &segments[1] {
+            BodySegment::DynamicTag { name, span } => {
+                assert_eq!(name, "if");
+                let ByteSpan { start, end } = *span;
+                assert_eq!(
+                    &source[start as usize..end as usize],
+                    "<if test=\"a\">AND a = #{a}</if>"
+                );
+            }
+            _ => panic!("expected a dynamic-tag marker"),
+        }
+        assert!(matches!(&segments[2], BodySegment::Text(t) if t.decoded == " more"));
     }
 }

@@ -60,6 +60,9 @@ pub enum DiagCode {
     OversizeInput,
     /// Recovery rule 3: first value wins, duplicate is reported here.
     DuplicateAttribute,
+    /// An entity reference could not be resolved (e.g. `&nbsp;`, common in
+    /// legacy mappers). The raw text is kept as-is for that segment (MM-08).
+    InvalidEntity,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
