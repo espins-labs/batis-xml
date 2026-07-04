@@ -170,7 +170,9 @@ fn build_mapper(
     let (namespace, mut diagnostics) = attr_value_spanned(source, &root_attrs, b"namespace");
 
     let mut statements = Vec::new();
+    let mut fragments = Vec::new();
     let mut seen_ids: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut seen_fragment_ids: HashSet<String> = HashSet::new();
 
     loop {
         let child_start = reader.buffer_position();
@@ -194,8 +196,10 @@ fn build_mapper(
             }
             Ok(Event::Start(tag)) => {
                 let tag_end = reader.buffer_position();
-                let kind = statement_kind(tag.local_name().as_ref());
-                if let Some(kind) = kind {
+                let local_name = tag.local_name();
+                let local_name = local_name.as_ref();
+
+                if let Some(kind) = statement_kind(local_name) {
                     let (statement, mut diags) = build_statement(
                         source,
                         kind,
@@ -218,6 +222,33 @@ fn build_mapper(
                     }
                     continue;
                 }
+
+                if local_name == b"sql" {
+                    let (fragment, mut diags) = build_fragment(
+                        source,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_fragment_ids,
+                    );
+                    diagnostics.append(&mut diags);
+                    if let Some(fragment) = fragment {
+                        fragments.push(fragment);
+                    }
+
+                    // Same body walk as statements — MM-04's "nested
+                    // include" edge case just means this must not choke on
+                    // <include> tags; they land as opaque DynamicTag
+                    // markers here too. Lifting them into IncludeRef is
+                    // MM-05's job.
+                    let (_segments, mut body_diags, truncated) =
+                        capture_body(source, reader, child_start as usize);
+                    diagnostics.append(&mut body_diags);
+                    if truncated {
+                        break;
+                    }
+                    continue;
+                }
+
                 match skip_subtree(reader) {
                     SkipOutcome::Eof => {
                         diagnostics.push(unclosed_tag(
@@ -240,7 +271,10 @@ fn build_mapper(
             }
             Ok(Event::Empty(tag)) => {
                 let tag_end = reader.buffer_position();
-                if let Some(kind) = statement_kind(tag.local_name().as_ref()) {
+                let local_name = tag.local_name();
+                let local_name = local_name.as_ref();
+
+                if let Some(kind) = statement_kind(local_name) {
                     let (statement, mut diags) = build_statement(
                         source,
                         kind,
@@ -250,16 +284,31 @@ fn build_mapper(
                     );
                     diagnostics.append(&mut diags);
                     statements.push(statement);
+                } else if local_name == b"sql" {
+                    let (fragment, mut diags) = build_fragment(
+                        source,
+                        child_start as usize,
+                        tag_end as usize,
+                        &mut seen_fragment_ids,
+                    );
+                    diagnostics.append(&mut diags);
+                    if let Some(fragment) = fragment {
+                        fragments.push(fragment);
+                    }
                 }
             }
             _ => continue,
         }
     }
 
+    // NOTE: "unused fragment" detection (spec edge case) needs
+    // cross-statement <include> resolution — that's a consumer/linker
+    // concern (MM-05 collects refs; nothing here resolves them), not this
+    // function's job.
     let mapper = Mapper {
         namespace,
         statements,
-        fragments: Vec::new(),
+        fragments,
         result_maps: Vec::new(),
     };
     (mapper, diagnostics)
@@ -335,6 +384,57 @@ fn build_statement(
         property_paths: Vec::new(),
     };
     (statement, diagnostics)
+}
+
+/// MM-04: builds one [`SqlFragment`] from a `<sql>` tag's raw byte range.
+/// `seen_fragment_ids` is a *separate* id space from statement ids (a
+/// fragment and a statement may legitimately share an id without either
+/// being a duplicate).
+///
+/// `SqlFragment.id` is non-optional in the model, so a `<sql>` without an
+/// `id` attribute can't be represented — it's dropped (`None` return) with
+/// a `MissingStatementId`-coded diagnostic.
+fn build_fragment(
+    source: &str,
+    tag_start: usize,
+    tag_end: usize,
+    seen_fragment_ids: &mut HashSet<String>,
+) -> (Option<SqlFragment>, Vec<Diagnostic>) {
+    let attrs = scan_attributes(source.as_bytes(), tag_start, tag_end);
+    let (id, mut diagnostics) = attr_value_spanned(source, &attrs, b"id");
+
+    let fragment = match id {
+        Some(id) => {
+            if !seen_fragment_ids.insert(id.value.clone()) {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::DuplicateStatementId,
+                    span: Some(id.span),
+                    message: format!("duplicate <sql> fragment id '{}'", id.value),
+                });
+            }
+            Some(SqlFragment {
+                id,
+                // Placeholder, same as Statement.sql — real text lands in
+                // MM-07/MM-06.
+                sql: SqlText::Variants(Vec::new()),
+                // MM-05's job to populate.
+                includes: Vec::new(),
+            })
+        }
+        None => {
+            diagnostics.push(Diagnostic {
+                code: DiagCode::MissingStatementId,
+                span: Some(ByteSpan {
+                    start: tag_start as u32,
+                    end: tag_end as u32,
+                }),
+                message: "<sql> fragment is missing an id attribute".to_string(),
+            });
+            None
+        }
+    };
+
+    (fragment, diagnostics)
 }
 
 /// Outcome of consuming a subtree after its opening `Start` event.
@@ -1100,5 +1200,93 @@ mod tests {
             _ => panic!("expected a dynamic-tag marker"),
         }
         assert!(matches!(&segments[2], BodySegment::Text(t) if t.decoded == " more"));
+    }
+
+    #[test]
+    fn mm_04_sql_fragment_is_collected() {
+        let source = r#"<mapper namespace="x"><sql id="widgetCols">id, name</sql></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 1);
+        let fragment = &mapper.fragments[0];
+        assert_eq!(fragment.id.value, "widgetCols");
+        let ByteSpan { start, end } = fragment.id.span;
+        assert_eq!(&source[start as usize..end as usize], fragment.id.value);
+        assert!(mapper.statements.is_empty());
+    }
+
+    #[test]
+    fn mm_04_empty_element_fragment_is_collected() {
+        let source = r#"<mapper namespace="x"><sql id="widgetCols"/></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 1);
+        assert_eq!(mapper.fragments[0].id.value, "widgetCols");
+    }
+
+    #[test]
+    fn mm_04_missing_fragment_id_is_dropped_with_diagnostic() {
+        let source = r#"<mapper namespace="x"><sql>id, name</sql></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert!(mapper.fragments.is_empty());
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].code, DiagCode::MissingStatementId);
+    }
+
+    #[test]
+    fn mm_04_duplicate_fragment_id_reuses_duplicate_statement_id_code() {
+        let source = r#"<mapper namespace="x">
+            <sql id="dup">a</sql>
+            <sql id="dup">b</sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 2);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::DuplicateStatementId)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn mm_04_fragment_and_statement_sharing_id_is_not_a_duplicate() {
+        // Fragment ids and statement ids are separate id spaces.
+        let source = r#"<mapper namespace="x">
+            <sql id="shared">id, name</sql>
+            <select id="shared">SELECT id, name FROM widget</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 1);
+        assert_eq!(mapper.statements.len(), 1);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn mm_04_fragment_body_with_nested_include_does_not_choke() {
+        let source = r#"<mapper namespace="x">
+            <sql id="withInclude">
+                id, name
+                <include refid="otherFragment"/>
+            </sql>
+            <sql id="afterInclude">more</sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let ids: Vec<_> = mapper
+            .fragments
+            .iter()
+            .map(|f| f.id.value.clone())
+            .collect();
+        assert_eq!(ids, vec!["withInclude", "afterInclude"]);
+        assert!(mapper.fragments[0].includes.is_empty()); // MM-05's job
     }
 }
