@@ -36,12 +36,12 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 return match name {
                     b"mapper" => ParseResult {
                         dialect: Dialect::Mybatis,
-                        mapper: Some(empty_mapper()),
+                        mapper: Some(mapper_with_namespace(source, start as usize, end as usize)),
                         diagnostics: Vec::new(),
                     },
                     b"sqlMap" => ParseResult {
                         dialect: Dialect::Ibatis,
-                        mapper: Some(empty_mapper()),
+                        mapper: Some(mapper_with_namespace(source, start as usize, end as usize)),
                         diagnostics: Vec::new(),
                     },
                     other => ParseResult {
@@ -92,13 +92,68 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
     }
 }
 
-fn empty_mapper() -> Mapper {
+/// MM-02: extracts the `namespace` attribute from the root tag's raw byte
+/// range `[tag_start, tag_end)`. Missing attribute (iBatis no-namespace
+/// mode) yields `None`; no synthesis.
+fn mapper_with_namespace(source: &str, tag_start: usize, tag_end: usize) -> Mapper {
+    let namespace = find_attr_value_span(source.as_bytes(), tag_start, tag_end, b"namespace").map(
+        |(start, end)| Spanned {
+            value: source[start..end].to_string(),
+            span: ByteSpan {
+                start: start as u32,
+                end: end as u32,
+            },
+        },
+    );
     Mapper {
-        namespace: None,
+        namespace,
         statements: Vec::new(),
         fragments: Vec::new(),
         result_maps: Vec::new(),
     }
+}
+
+/// Scans a raw tag byte range for `name="value"` / `name='value'` and
+/// returns the absolute byte span of the (raw, unescaped) value. This is a
+/// plain byte scan rather than attribute-value decoding — good enough for
+/// identifier-shaped values (namespace, ids); entity-bearing values are out
+/// of scope here.
+fn find_attr_value_span(
+    bytes: &[u8],
+    tag_start: usize,
+    tag_end: usize,
+    name: &[u8],
+) -> Option<(usize, usize)> {
+    let haystack = &bytes[tag_start..tag_end];
+    let mut i = 0;
+    while i + name.len() <= haystack.len() {
+        let boundary_before = i == 0 || haystack[i - 1].is_ascii_whitespace();
+        if boundary_before && &haystack[i..i + name.len()] == name {
+            let mut j = i + name.len();
+            while j < haystack.len() && haystack[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < haystack.len() && haystack[j] == b'=' {
+                j += 1;
+                while j < haystack.len() && haystack[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < haystack.len() && (haystack[j] == b'"' || haystack[j] == b'\'') {
+                    let quote = haystack[j];
+                    let value_start = j + 1;
+                    let mut k = value_start;
+                    while k < haystack.len() && haystack[k] != quote {
+                        k += 1;
+                    }
+                    if k < haystack.len() {
+                        return Some((tag_start + value_start, tag_start + k));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -168,5 +223,47 @@ mod tests {
         assert_eq!(result.dialect, Dialect::Unknown);
         assert!(result.mapper.is_none());
         assert_eq!(result.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn mm_02_namespace_attribute_is_captured_with_span() {
+        let source = r#"<mapper namespace="com.example.demo.mapper.WidgetMapper"></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let namespace = mapper.namespace.expect("namespace present");
+        assert_eq!(namespace.value, "com.example.demo.mapper.WidgetMapper");
+        let ByteSpan { start, end } = namespace.span;
+        assert_eq!(&source[start as usize..end as usize], namespace.value);
+    }
+
+    #[test]
+    fn mm_02_missing_namespace_is_none() {
+        // iBatis no-namespace mode: the prefix lives inside the statement
+        // id, not a namespace attribute.
+        let source = "<sqlMap></sqlMap>";
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert!(mapper.namespace.is_none());
+    }
+
+    #[test]
+    fn mm_02_namespace_with_embedded_whitespace_and_newline() {
+        let source = "<mapper namespace=\"com.example\n  .demo.Mapper\"></mapper>";
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let namespace = mapper.namespace.expect("namespace present");
+        assert_eq!(namespace.value, "com.example\n  .demo.Mapper");
+        let ByteSpan { start, end } = namespace.span;
+        assert_eq!(&source[start as usize..end as usize], namespace.value);
+    }
+
+    #[test]
+    fn mm_02_empty_namespace_is_some_empty_string() {
+        let source = r#"<mapper namespace=""></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let namespace = mapper.namespace.expect("namespace attribute present");
+        assert_eq!(namespace.value, "");
+        assert_eq!(namespace.span.start, namespace.span.end);
     }
 }
