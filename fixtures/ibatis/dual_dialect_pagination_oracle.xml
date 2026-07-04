@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <select id="widgetDAO.getWidgetPage" parameterClass="map" resultClass="widget">
+    <![CDATA[
+    SELECT widget_id, widget_name FROM (
+      SELECT widget_id, widget_name, ROWNUM rn
+      FROM demo_widget ORDER BY widget_id
+    )
+    WHERE rn BETWEEN #pageOffset# AND #pageOffset# + #pageSize#
+    ]]>
+  </select>
+</sqlMap>

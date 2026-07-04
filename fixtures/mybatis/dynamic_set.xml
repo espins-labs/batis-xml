@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <update id="updateWidget">
+    UPDATE demo_widget
+    <set>
+      <if test="name != null">widget_name = #{name},</if>
+      <if test="status != null">status = #{status},</if>
+    </set>
+    WHERE widget_id = #{id}
+  </update>
+</mapper>

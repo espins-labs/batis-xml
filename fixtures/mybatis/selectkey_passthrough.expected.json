@@ -1,0 +1,88 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "insert",
+        "id": {
+          "value": "insertWidget",
+          "span": {
+            "start": 221,
+            "end": 233
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    \n      SELECT NEXT VALUE FOR widget_seq\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "span_map": [
+                  [
+                    0,
+                    281
+                  ],
+                  [
+                    5,
+                    347
+                  ],
+                  [
+                    49,
+                    403
+                  ],
+                  [
+                    112,
+                    470
+                  ],
+                  [
+                    115,
+                    479
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 250,
+            "end": 279
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 467,
+              "end": 469
+            }
+          },
+          {
+            "value": "name",
+            "span": {
+              "start": 474,
+              "end": 478
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

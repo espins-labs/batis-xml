@@ -1,0 +1,109 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidgetsByStatus",
+          "span": {
+            "start": 221,
+            "end": 242
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE status = 'A'\n  ",
+                "span_map": [
+                  [
+                    0,
+                    287
+                  ],
+                  [
+                    56,
+                    390
+                  ],
+                  [
+                    74,
+                    549
+                  ]
+                ]
+              },
+              "conditions": [
+                "status == 'ACTIVE'"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE status = 'I'\n  ",
+                "span_map": [
+                  [
+                    0,
+                    287
+                  ],
+                  [
+                    56,
+                    456
+                  ],
+                  [
+                    74,
+                    549
+                  ]
+                ]
+              },
+              "conditions": [
+                "status == 'INACTIVE'"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE status IS NOT NULL\n  ",
+                "span_map": [
+                  [
+                    0,
+                    287
+                  ],
+                  [
+                    56,
+                    499
+                  ],
+                  [
+                    80,
+                    549
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 256,
+            "end": 285
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

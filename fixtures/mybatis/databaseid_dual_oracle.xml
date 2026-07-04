@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <select id="selectWidgetsPaged" databaseId="oracle" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name FROM (
+      SELECT widget_id, widget_name, ROWNUM rn FROM demo_widget ORDER BY widget_id
+    )
+    WHERE rn BETWEEN #{offset} AND #{offset} + #{limit}
+  </select>
+</mapper>

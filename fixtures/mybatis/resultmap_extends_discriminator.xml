@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <resultMap id="widgetResultMap" type="com.example.demo.model.Widget">
+    <id column="widget_id" property="id"/>
+    <result column="widget_name" property="name"/>
+    <discriminator column="widget_type" javaType="string">
+      <case value="A" resultMap="widgetAResultMap"/>
+      <case value="B">
+        <result column="legacy_flag" property="legacyFlag"/>
+      </case>
+    </discriminator>
+  </resultMap>
+  <resultMap id="widgetAResultMap" type="com.example.demo.model.WidgetA" extends="widgetResultMap">
+    <result column="extra_flag" property="extraFlag"/>
+  </resultMap>
+</mapper>

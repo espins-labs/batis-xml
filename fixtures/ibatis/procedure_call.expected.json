@@ -1,0 +1,74 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "procedure",
+        "id": {
+          "value": "widgetDAO.callRecalcWidgetStats",
+          "span": {
+            "start": 181,
+            "end": 212
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    {call sp_recalc_widget_stats(?, ?)}\n  ",
+                "span_map": [
+                  [
+                    0,
+                    235
+                  ],
+                  [
+                    35,
+                    279
+                  ],
+                  [
+                    38,
+                    296
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 230,
+            "end": 233
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "widgetId",
+            "span": {
+              "start": 270,
+              "end": 278
+            }
+          },
+          {
+            "value": "asOfDate",
+            "span": {
+              "start": 282,
+              "end": 290
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

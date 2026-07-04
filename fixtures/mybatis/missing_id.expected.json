@@ -1,0 +1,60 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": null,
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n  ",
+                "span_map": [
+                  [
+                    0,
+                    260
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 229,
+            "end": 258
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": [
+    {
+      "code": "missing_statement_id",
+      "span": {
+        "start": 209,
+        "end": 260
+      },
+      "message": "statement is missing an id attribute"
+    }
+  ]
+}

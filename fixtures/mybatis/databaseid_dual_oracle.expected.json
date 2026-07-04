@@ -1,0 +1,97 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidgetsPaged",
+          "span": {
+            "start": 221,
+            "end": 239
+          }
+        },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 253,
+            "end": 259
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM (\n      SELECT widget_id, widget_name, ROWNUM rn FROM demo_widget ORDER BY widget_id\n    )\n    WHERE rn BETWEEN ? AND ? + ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    304
+                  ],
+                  [
+                    153,
+                    465
+                  ],
+                  [
+                    159,
+                    479
+                  ],
+                  [
+                    163,
+                    490
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 273,
+            "end": 302
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "offset",
+            "span": {
+              "start": 458,
+              "end": 464
+            }
+          },
+          {
+            "value": "offset",
+            "span": {
+              "start": 472,
+              "end": 478
+            }
+          },
+          {
+            "value": "limit",
+            "span": {
+              "start": 484,
+              "end": 489
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

@@ -1,0 +1,90 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "widgetDAO.getWidgetPage",
+          "span": {
+            "start": 178,
+            "end": 201
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    \n    SELECT widget_id, widget_name\n    FROM demo_widget\n    ORDER BY widget_id\n    LIMIT ? OFFSET ?\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    245
+                  ],
+                  [
+                    5,
+                    259
+                  ],
+                  [
+                    95,
+                    358
+                  ],
+                  [
+                    104,
+                    378
+                  ],
+                  [
+                    109,
+                    386
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 219,
+            "end": 222
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 237,
+            "end": 243
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "pageSize",
+            "span": {
+              "start": 349,
+              "end": 357
+            }
+          },
+          {
+            "value": "pageOffset",
+            "span": {
+              "start": 367,
+              "end": 377
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

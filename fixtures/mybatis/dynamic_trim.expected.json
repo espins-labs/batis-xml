@@ -1,0 +1,179 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "searchWidgetsTrim",
+          "span": {
+            "start": 221,
+            "end": 238
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    283
+                  ],
+                  [
+                    56,
+                    520
+                  ]
+                ]
+              },
+              "conditions": []
+            },
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREstatus = ?\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    283
+                  ],
+                  [
+                    56,
+                    339
+                  ],
+                  [
+                    61,
+                    485
+                  ],
+                  [
+                    71,
+                    508
+                  ],
+                  [
+                    76,
+                    520
+                  ]
+                ]
+              },
+              "conditions": [
+                "status != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREwidget_name = ?\n      \n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    283
+                  ],
+                  [
+                    56,
+                    339
+                  ],
+                  [
+                    61,
+                    422
+                  ],
+                  [
+                    76,
+                    448
+                  ],
+                  [
+                    83,
+                    508
+                  ],
+                  [
+                    88,
+                    520
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREwidget_name = ?\n      AND status = ?\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    283
+                  ],
+                  [
+                    56,
+                    339
+                  ],
+                  [
+                    61,
+                    422
+                  ],
+                  [
+                    76,
+                    448
+                  ],
+                  [
+                    83,
+                    481
+                  ],
+                  [
+                    97,
+                    508
+                  ],
+                  [
+                    102,
+                    520
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null",
+                "status != null"
+              ]
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 252,
+            "end": 281
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "name",
+            "span": {
+              "start": 438,
+              "end": 442
+            }
+          },
+          {
+            "value": "status",
+            "span": {
+              "start": 496,
+              "end": 502
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

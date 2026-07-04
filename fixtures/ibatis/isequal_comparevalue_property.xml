@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <select id="widgetDAO.selectWidgetsConditional" parameterClass="map" resultClass="widget">
+    SELECT widget_id, widget_name FROM demo_widget
+    WHERE 1 = 1
+    <isEqual property="status" compareValue="Y"> AND status = 'Y'</isEqual>
+    <isEqual property="ownerId" compareProperty="requesterId"> AND owner_id = requester_id</isEqual>
+  </select>
+</sqlMap>

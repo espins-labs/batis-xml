@@ -1,0 +1,71 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "widgetDAO.selectWidgetsByName",
+          "span": {
+            "start": 178,
+            "end": 207
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_name = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    251
+                  ],
+                  [
+                    73,
+                    337
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 225,
+            "end": 228
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 243,
+            "end": 249
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "name",
+            "span": {
+              "start": 324,
+              "end": 328
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

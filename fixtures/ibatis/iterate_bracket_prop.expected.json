@@ -1,0 +1,94 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "widgetDAO.selectWidgetsByIds",
+          "span": {
+            "start": 178,
+            "end": 206
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE widget_id IN\n    (\n      ?\n    )\n  ",
+                "span_map": [
+                  [
+                    0,
+                    261
+                  ],
+                  [
+                    79,
+                    340
+                  ],
+                  [
+                    80,
+                    399
+                  ],
+                  [
+                    88,
+                    419
+                  ],
+                  [
+                    93,
+                    340
+                  ],
+                  [
+                    94,
+                    434
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "java.util.List"
+          },
+          "span": {
+            "start": 224,
+            "end": 238
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 253,
+            "end": 259
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "ids",
+            "span": {
+              "start": 340,
+              "end": 434
+            }
+          },
+          {
+            "value": "[].widgetId",
+            "span": {
+              "start": 407,
+              "end": 418
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

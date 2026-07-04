@@ -1,0 +1,194 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "widgetDAO.getWidget",
+          "span": {
+            "start": 178,
+            "end": 197
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    242
+                  ],
+                  [
+                    71,
+                    316
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 215,
+            "end": 219
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 234,
+            "end": 240
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 313,
+              "end": 315
+            }
+          }
+        ]
+      },
+      {
+        "kind": "select",
+        "id": {
+          "value": "orderDAO.getOrder",
+          "span": {
+            "start": 343,
+            "end": 360
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT order_id, widget_id FROM demo_order WHERE order_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    404
+                  ],
+                  [
+                    66,
+                    473
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 378,
+            "end": 382
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "order"
+          },
+          "span": {
+            "start": 397,
+            "end": 402
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 470,
+              "end": 472
+            }
+          }
+        ]
+      },
+      {
+        "kind": "update",
+        "id": {
+          "value": "orderDAO.updateOrderStatus",
+          "span": {
+            "start": 500,
+            "end": 526
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    UPDATE demo_order SET status = ? WHERE order_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    549
+                  ],
+                  [
+                    37,
+                    593
+                  ],
+                  [
+                    56,
+                    615
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 544,
+            "end": 547
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "status",
+            "span": {
+              "start": 586,
+              "end": 592
+            }
+          },
+          {
+            "value": "id",
+            "span": {
+              "start": 612,
+              "end": 614
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

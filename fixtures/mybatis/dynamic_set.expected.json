@@ -1,0 +1,198 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "update",
+        "id": {
+          "value": "updateWidget",
+          "span": {
+            "start": 221,
+            "end": 233
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    UPDATE demo_widget\n    \n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    235
+                  ],
+                  [
+                    28,
+                    394
+                  ],
+                  [
+                    52,
+                    422
+                  ]
+                ]
+              },
+              "conditions": []
+            },
+            {
+              "text": {
+                "text": "\n    UPDATE demo_widget\n    SET \n      \n      status = ?\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    235
+                  ],
+                  [
+                    28,
+                    263
+                  ],
+                  [
+                    32,
+                    268
+                  ],
+                  [
+                    39,
+                    326
+                  ],
+                  [
+                    46,
+                    359
+                  ],
+                  [
+                    56,
+                    394
+                  ],
+                  [
+                    80,
+                    422
+                  ]
+                ]
+              },
+              "conditions": [
+                "status != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    UPDATE demo_widget\n    SET \n      widget_name = ?\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    235
+                  ],
+                  [
+                    28,
+                    263
+                  ],
+                  [
+                    32,
+                    268
+                  ],
+                  [
+                    39,
+                    299
+                  ],
+                  [
+                    54,
+                    394
+                  ],
+                  [
+                    78,
+                    422
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    UPDATE demo_widget\n    SET \n      widget_name = ?,\n      status = ?\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    235
+                  ],
+                  [
+                    28,
+                    263
+                  ],
+                  [
+                    32,
+                    268
+                  ],
+                  [
+                    39,
+                    299
+                  ],
+                  [
+                    54,
+                    320
+                  ],
+                  [
+                    55,
+                    326
+                  ],
+                  [
+                    62,
+                    359
+                  ],
+                  [
+                    72,
+                    394
+                  ],
+                  [
+                    96,
+                    422
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null",
+                "status != null"
+              ]
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "name",
+            "span": {
+              "start": 315,
+              "end": 319
+            }
+          },
+          {
+            "value": "status",
+            "span": {
+              "start": 370,
+              "end": 376
+            }
+          },
+          {
+            "value": "id",
+            "span": {
+              "start": 419,
+              "end": 421
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

@@ -1,0 +1,66 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidgetBroken",
+          "span": {
+            "start": 221,
+            "end": 239
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = #{id",
+                "span_map": [
+                  [
+                    0,
+                    284
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 253,
+            "end": 282
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": [
+    {
+      "code": "unterminated_placeholder",
+      "span": {
+        "start": 284,
+        "end": 353
+      },
+      "message": "placeholder was never closed"
+    }
+  ]
+}

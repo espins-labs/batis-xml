@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <insert id="insertWidget" parameterType="com.example.demo.model.Widget">
+    <selectKey keyProperty="id" resultType="long" order="BEFORE">
+      SELECT NEXT VALUE FOR widget_seq
+    </selectKey>
+    INSERT INTO demo_widget (widget_id, widget_name) VALUES (#{id}, #{name})
+  </insert>
+</mapper>

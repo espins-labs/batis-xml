@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <select id="widgetDAO.searchWidgets" parameterClass="map" resultClass="widget">
+    SELECT widget_id, widget_name FROM demo_widget
+    <dynamic prepend="WHERE">
+      <isNotEmpty prepend="AND" property="name">
+        widget_name = #name#
+      </isNotEmpty>
+      <isNotEmpty prepend="AND" property="status">
+        status = #status#
+      </isNotEmpty>
+    </dynamic>
+  </select>
+</sqlMap>

@@ -1,0 +1,160 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidgetById",
+          "span": {
+            "start": 361,
+            "end": 377
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT /* atlas:include(baseColumns) */\n    FROM demo_widget\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    422
+                  ],
+                  [
+                    12,
+                    434
+                  ],
+                  [
+                    44,
+                    464
+                  ],
+                  [
+                    89,
+                    513
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [
+          {
+            "value": {
+              "raw": "baseColumns",
+              "target": {
+                "local": "baseColumns"
+              }
+            },
+            "span": {
+              "start": 434,
+              "end": 464
+            }
+          }
+        ],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 391,
+            "end": 420
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 510,
+              "end": 512
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [
+      {
+        "id": {
+          "value": "auditColumns",
+          "span": {
+            "start": 218,
+            "end": 230
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "created_at, updated_at",
+                "span_map": [
+                  [
+                    0,
+                    232
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": []
+      },
+      {
+        "id": {
+          "value": "baseColumns",
+          "span": {
+            "start": 272,
+            "end": 283
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "widget_id, widget_name, /* atlas:include(auditColumns) */",
+                "span_map": [
+                  [
+                    0,
+                    285
+                  ],
+                  [
+                    24,
+                    309
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [
+          {
+            "value": {
+              "raw": "auditColumns",
+              "target": {
+                "local": "auditColumns"
+              }
+            },
+            "span": {
+              "start": 309,
+              "end": 340
+            }
+          }
+        ]
+      }
+    ],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

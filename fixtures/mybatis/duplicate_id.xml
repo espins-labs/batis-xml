@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <select id="selectWidget" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = #{id}
+  </select>
+  <select id="selectWidget" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = #{id} AND status = 'A'
+  </select>
+</mapper>

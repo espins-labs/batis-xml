@@ -1,0 +1,130 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 221,
+            "end": 233
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    278
+                  ],
+                  [
+                    71,
+                    353
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 247,
+            "end": 276
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 350,
+              "end": 352
+            }
+          }
+        ]
+      },
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 380,
+            "end": 392
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = ? AND status = 'A'\n  ",
+                "span_map": [
+                  [
+                    0,
+                    437
+                  ],
+                  [
+                    71,
+                    512
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 406,
+            "end": 435
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 509,
+              "end": 511
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": [
+    {
+      "code": "duplicate_statement_id",
+      "span": {
+        "start": 380,
+        "end": 392
+      },
+      "message": "duplicate statement id 'selectWidget'"
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [],
+    "fragments": [],
+    "result_maps": [
+      {
+        "id": {
+          "value": "widgetResultMap",
+          "span": {
+            "start": 224,
+            "end": 239
+          }
+        },
+        "type_ref": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 247,
+            "end": 276
+          }
+        },
+        "extends": null,
+        "mappings": [
+          {
+            "column": "widget_id",
+            "property": "id"
+          },
+          {
+            "column": "widget_name",
+            "property": "name"
+          },
+          {
+            "column": "legacy_flag",
+            "property": "legacyFlag"
+          }
+        ]
+      },
+      {
+        "id": {
+          "value": "widgetAResultMap",
+          "span": {
+            "start": 636,
+            "end": 652
+          }
+        },
+        "type_ref": {
+          "value": {
+            "raw": "com.example.demo.model.WidgetA"
+          },
+          "span": {
+            "start": 660,
+            "end": 690
+          }
+        },
+        "extends": {
+          "value": "widgetResultMap",
+          "span": {
+            "start": 701,
+            "end": 716
+          }
+        },
+        "mappings": [
+          {
+            "column": "extra_flag",
+            "property": "extraFlag"
+          }
+        ]
+      }
+    ]
+  },
+  "diagnostics": []
+}
