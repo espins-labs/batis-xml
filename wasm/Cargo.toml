@@ -7,6 +7,8 @@ authors = ["ESPINS <dlwlalsggg@gmail.com>"]
 description = "WebAssembly bindings for batis-xml (MyBatis/iBatis mapper XML parser)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/espins-labs/batis-xml"
+# Distributed via npm (wasm-pack), not crates.io.
+publish = false
 keywords = ["mybatis", "ibatis", "wasm", "parser"]
 categories = ["wasm"]
 
