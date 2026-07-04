@@ -2111,4 +2111,128 @@ mod tests {
             .collect();
         assert_eq!(raws, vec!["a", "b"]); // document order, no duplicates
     }
+
+    #[test]
+    fn mm_06c_is_not_empty_synthesizes_condition_and_branches() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1<isNotEmpty property="grpCd"> AND grp_cd = #grpCd#</isNotEmpty></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let present = vs.iter().find(|v| v.text.text.contains("grp_cd")).unwrap();
+        assert_eq!(present.text.text, "SELECT 1 AND grp_cd = ?");
+        assert_eq!(present.conditions, vec!["isNotEmpty(grpCd)".to_string()]);
+        let absent = vs.iter().find(|v| !v.text.text.contains("grp_cd")).unwrap();
+        assert_eq!(absent.text.text, "SELECT 1");
+        assert!(absent.conditions.is_empty());
+    }
+
+    #[test]
+    fn mm_06c_is_equal_condition_includes_compare_value() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1<isEqual property="status" compareValue="Y"> AND status = 'Y'</isEqual></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let present = vs.iter().find(|v| v.text.text.contains("status")).unwrap();
+        assert_eq!(present.conditions, vec!["isEqual(status, 'Y')".to_string()]);
+    }
+
+    #[test]
+    fn mm_06c_is_equal_condition_includes_compare_property() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1<isEqual property="a" compareProperty="b"> AND a = b</isEqual></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let present = vs.iter().find(|v| v.text.text.contains("a = b")).unwrap();
+        assert_eq!(present.conditions, vec!["isEqual(a, b)".to_string()]);
+    }
+
+    #[test]
+    fn mm_06c_unknown_is_tag_treated_as_generic_conditional_not_passthrough() {
+        // A made-up "is*" tag we don't specifically recognize must still
+        // branch (safer than silently flattening a conditional away).
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1<isMadeUpCondition property="x"> AND x = 1</isMadeUpCondition></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let present = vs.iter().find(|v| v.text.text.contains("x = 1")).unwrap();
+        assert_eq!(present.conditions, vec!["isMadeUpCondition(x)".to_string()]);
+    }
+
+    #[test]
+    fn mm_06c_conditional_prepend_joins_before_body_with_spaces() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1 WHERE 1=1<isNotEmpty property="a" prepend="AND">a = #a#</isNotEmpty></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let present = vs.iter().find(|v| v.text.text.contains("a = ?")).unwrap();
+        assert_eq!(present.text.text, "SELECT 1 WHERE 1=1AND a = ?");
+    }
+
+    #[test]
+    fn mm_06c_dynamic_suppresses_first_rendered_childs_prepend() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1<dynamic prepend="WHERE"><isNotEmpty property="a" prepend="AND">a = #a#</isNotEmpty> <isNotEmpty property="b" prepend="AND">b = #b#</isNotEmpty></dynamic></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 4); // 2 x 2, dynamic itself isn't a branch
+
+        let both = vs
+            .iter()
+            .find(|v| v.text.text.contains('a') && v.text.text.contains('b'));
+        assert_eq!(both.unwrap().text.text, "SELECT 1WHERE a = ? AND b = ?");
+
+        // Only one side present still carries the whitespace text segment
+        // that sits between the two sibling tags in the source — this
+        // isn't a bug, just a faithful rendering of that segment.
+        let only_a = vs
+            .iter()
+            .find(|v| v.text.text.contains("a = ?") && !v.text.text.contains("b = ?"))
+            .unwrap();
+        assert_eq!(only_a.text.text, "SELECT 1WHERE a = ? ");
+
+        let only_b = vs
+            .iter()
+            .find(|v| v.text.text.contains("b = ?") && !v.text.text.contains("a = ?"))
+            .unwrap();
+        assert_eq!(only_b.text.text, "SELECT 1WHERE  b = ?");
+
+        let neither = vs
+            .iter()
+            .find(|v| !v.text.text.contains("a = ?") && !v.text.text.contains("b = ?"))
+            .unwrap();
+        assert_eq!(neither.text.text, "SELECT 1"); // dynamic contributes nothing when empty
+    }
+
+    #[test]
+    fn mm_06c_iterate_wraps_once_ignores_conjunction_records_property() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT 1 WHERE id IN <iterate property="ids" open="(" close=")" conjunction=",">#ids[]#</iterate></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1); // not a branch
+        assert_eq!(vs[0].text.text, "SELECT 1 WHERE id IN (?)");
+        let paths: Vec<_> = mapper.statements[0]
+            .property_paths
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect();
+        assert!(paths.contains(&"ids"));
+        assert!(paths.contains(&"ids[]"));
+    }
 }

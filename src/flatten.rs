@@ -13,15 +13,16 @@
 //! (`SqlString::span_map`) so downstream SQL analysis can point at the XML
 //! source.
 //!
-//! ## MM-06a/06b scope
+//! ## MM-06a/06b/06c scope
 //!
 //! `<if>` and `<choose>/<when>/<otherwise>` have real branch semantics
 //! (MM-06a). `<where>`/`<set>`/`<trim>`/`<foreach>`/`<bind>` have real
-//! wrapper semantics (MM-06b, see [`expand_where`] etc.). Every remaining
-//! dynamic tag (all iBatis tags) is still a *transparent passthrough* —
-//! recursed into (so nested `<if>` still branches) but contributes no
-//! wrapper text or branch factor of its own. MM-06c replaces this default
-//! for iBatis tags.
+//! wrapper semantics (MM-06b). iBatis's `<isNotEmpty>`/`<isEqual>`/etc.
+//! (any tag name starting with `is`), `<dynamic>`, and `<iterate>` have
+//! real semantics too (MM-06c, see [`expand_conditional`]/
+//! [`expand_dynamic`]/[`expand_iterate`]). Any *other* dynamic tag is still
+//! a transparent passthrough — recursed into (so a nested `<if>` still
+//! branches) but contributes no wrapper text or branch factor of its own.
 //!
 //! `<include>` markers found anywhere during this recursive descent
 //! (top-level or nested) are collected into [`FlattenResult::found_includes`]
@@ -71,6 +72,16 @@ enum Piece {
     },
     Include {
         raw: String,
+        span: ByteSpan,
+    },
+    /// An iBatis conditional tag's own `prepend` attribute, rendered as
+    /// `"{value} "` before its body. Kept as a distinct variant (rather
+    /// than baked into a `Normalized` piece) so `<dynamic>`'s
+    /// `removeFirstPrepend` behavior can find and strip *specifically* the
+    /// first rendered child's prepend, instead of guessing from text
+    /// patterns (a `prepend` value isn't necessarily "AND"/"OR").
+    Prepend {
+        value: String,
         span: ByteSpan,
     },
 }
@@ -236,9 +247,21 @@ fn flatten_segments(
                     let local = expand_foreach(source, *span, ctx)?;
                     acc = try_combine(&acc, &local)?;
                 }
+                "dynamic" => {
+                    let local = expand_dynamic(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "iterate" => {
+                    let local = expand_iterate(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                _ if name.starts_with("is") => {
+                    let local = expand_conditional(source, name, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
                 _ => {
-                    // Transparent passthrough — iBatis tags (MM-06c) land
-                    // here for now.
+                    // Transparent passthrough — anything with no special
+                    // semantics at all.
                     let local = expand_transparent(source, *span, ctx)?;
                     acc = try_combine(&acc, &local)?;
                 }
@@ -456,6 +479,154 @@ fn expand_foreach(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt
     Ok(local)
 }
 
+/// iBatis conditional tags (`<isNotEmpty>`, `<isEqual>`, ... — anything
+/// named `is*`, known or not) → 2 alternatives: absent (empty, no
+/// condition) and present (body's own alternatives, each prefixed with a
+/// synthesized condition and, if the tag has a `prepend` attribute, that
+/// value rendered as a leading [`Piece::Prepend`]).
+fn expand_conditional(
+    source: &str,
+    tag_name: &str,
+    span: ByteSpan,
+    ctx: &mut Ctx,
+) -> Result<Vec<Alt>, u64> {
+    let condition = synthesize_condition(tag_name, source, span, ctx);
+    let prepend = read_attr_opt(source, span, b"prepend", ctx);
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let mut local = vec![empty_alt()];
+    for alt in inner_alts {
+        let mut pieces = Vec::new();
+        if let Some(value) = &prepend {
+            pieces.push(Piece::Prepend {
+                value: value.clone(),
+                span,
+            });
+        }
+        pieces.extend(alt.pieces);
+        let mut conditions = vec![condition.clone()];
+        conditions.extend(alt.conditions);
+        local.push(Alt { pieces, conditions });
+    }
+
+    if local.len() as u64 > BRANCH_LIMIT as u64 {
+        return Err(local.len() as u64);
+    }
+    Ok(local)
+}
+
+/// Synthesizes a condition string from an iBatis conditional tag's
+/// semantics, e.g. `isNotEmpty(grpCd)` or `isEqual(status, 'Y')`. Unknown
+/// `is*` tag names are handled exactly the same way — safer than silently
+/// treating an unrecognized conditional as a non-branching passthrough.
+fn synthesize_condition(tag_name: &str, source: &str, span: ByteSpan, ctx: &mut Ctx) -> String {
+    let property = read_attr(source, span, b"property", ctx);
+    if let Some(value) = read_attr_opt(source, span, b"compareValue", ctx) {
+        format!("{tag_name}({property}, '{value}')")
+    } else if let Some(prop) = read_attr_opt(source, span, b"compareProperty", ctx) {
+        format!("{tag_name}({property}, {prop})")
+    } else {
+        format!("{tag_name}({property})")
+    }
+}
+
+/// `<dynamic prepend="WHERE">`: like `<where>`, contributes its `prepend`
+/// only when the assembled inner text is non-empty — but it also
+/// suppresses the *first rendered* child's own prepend (iBatis's
+/// `removeFirstPrepend`), since otherwise two `<isNotEmpty prepend="AND">`
+/// children would render `WHERE AND a = ? AND b = ?`. "First rendered"
+/// varies by branch combination, so this operates per-variant, after the
+/// inner alternatives are known but before their pieces are assembled to
+/// text (stripping a specific piece is precise; guessing from rendered
+/// text — like `<where>`'s AND/OR scan — isn't, since `prepend` can be any
+/// string).
+fn expand_dynamic(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let prepend = read_attr(source, span, b"prepend", ctx);
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|mut alt| {
+            remove_first_prepend(&mut alt.pieces);
+            let inner_sql = assemble(&alt.pieces);
+            let pieces = if inner_sql.text.trim().is_empty() {
+                Vec::new()
+            } else if prepend.is_empty() {
+                vec![to_piece(inner_sql)]
+            } else {
+                vec![to_piece(with_prefix(
+                    inner_sql,
+                    span.start,
+                    0,
+                    &format!("{prepend} "),
+                ))]
+            };
+            Alt {
+                pieces,
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
+}
+
+/// Removes the first [`Piece::Prepend`] found (if any) — see
+/// [`expand_dynamic`].
+fn remove_first_prepend(pieces: &mut Vec<Piece>) {
+    if let Some(pos) = pieces
+        .iter()
+        .position(|p| matches!(p, Piece::Prepend { .. }))
+    {
+        pieces.remove(pos);
+    }
+}
+
+/// `<iterate property open close conjunction>`: mirrors `<foreach>` — a
+/// repetition, not a branch. `conjunction` (iterate's analog of
+/// `foreach`'s `separator`) describes runtime item-joining and isn't
+/// representable statically, so it's ignored. `property` names the
+/// iterated collection; like `<bind>`'s `value`, it lives in an attribute
+/// that MM-07 normalization never sees, so it's recorded explicitly.
+fn expand_iterate(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let open = read_attr(source, span, b"open", ctx);
+    let close = read_attr(source, span, b"close", ctx);
+    if let Some(property) = read_attr_opt(source, span, b"property", ctx) {
+        if !property.is_empty() {
+            ctx.property_paths.push(Spanned {
+                value: property,
+                span,
+            });
+        }
+    }
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|alt| {
+            let inner_sql = assemble(&alt.pieces);
+            let wrapped = with_suffix(
+                with_prefix(inner_sql, span.start, 0, &open),
+                span.start,
+                &close,
+            );
+            Alt {
+                pieces: vec![to_piece(wrapped)],
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
+}
+
 /// Cartesian-combines two alternative lists, bailing out with the (not
 /// materialized) product count if it would exceed [`BRANCH_LIMIT`].
 fn try_combine(acc: &[Alt], local: &[Alt]) -> Result<Vec<Alt>, u64> {
@@ -512,6 +683,19 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
                     ctx.property_paths.push(Spanned { value, span: *span });
                 }
             }
+            BodySegment::DynamicTag { name, span } if name == "iterate" => {
+                if let Some(property) = read_attr_opt(source, *span, b"property", ctx) {
+                    if !property.is_empty() {
+                        ctx.property_paths.push(Spanned {
+                            value: property,
+                            span: *span,
+                        });
+                    }
+                }
+                let (inner_segments, mut d, _t) = capture_subtree(source, *span);
+                ctx.diagnostics.append(&mut d);
+                pieces.extend(union_walk(source, &inner_segments, ctx));
+            }
             BodySegment::DynamicTag { name, span } if name == "choose" => {
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
                 ctx.diagnostics.append(&mut d);
@@ -563,6 +747,10 @@ fn assemble(pieces: &[Piece]) -> SqlString {
             Piece::Include { raw, span } => {
                 push_span_entry(&mut span_map, text.len() as u32, span.start);
                 text.push_str(&format!("/* atlas:include({raw}) */"));
+            }
+            Piece::Prepend { value, span } => {
+                push_span_entry(&mut span_map, text.len() as u32, span.start);
+                text.push_str(&format!("{value} "));
             }
         }
     }
@@ -773,10 +961,14 @@ fn record_include(source: &str, span: ByteSpan, ctx: &mut Ctx) {
 }
 
 fn read_attr(source: &str, span: ByteSpan, name: &[u8], ctx: &mut Ctx) -> String {
+    read_attr_opt(source, span, name, ctx).unwrap_or_default()
+}
+
+fn read_attr_opt(source: &str, span: ByteSpan, name: &[u8], ctx: &mut Ctx) -> Option<String> {
     let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
     let (value, mut diags) = attr_value_spanned(source, &attrs, name);
     ctx.diagnostics.append(&mut diags);
-    value.map(|v| v.value).unwrap_or_default()
+    value.map(|v| v.value)
 }
 
 fn read_refid(source: &str, span: ByteSpan) -> String {
