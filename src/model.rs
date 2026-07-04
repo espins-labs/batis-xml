@@ -58,6 +58,8 @@ pub enum DiagCode {
     BranchLimitExceeded,
     UnknownElement,
     OversizeInput,
+    /// Recovery rule 3: first value wins, duplicate is reported here.
+    DuplicateAttribute,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
