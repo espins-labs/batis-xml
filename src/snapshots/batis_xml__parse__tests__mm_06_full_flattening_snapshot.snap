@@ -27,7 +27,7 @@ expression: result
           "variants": [
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE active = 1\n                \n            ",
+                "text": "\n                SELECT /* batis:include(baseCols) */ FROM widget\n                WHERE active = 1\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -65,7 +65,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE active = 0\n                \n            ",
+                "text": "\n                SELECT /* batis:include(baseCols) */ FROM widget\n                WHERE active = 0\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -101,7 +101,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 1\n                \n            ",
+                "text": "\n                SELECT /* batis:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 1\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -148,7 +148,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 0\n                \n            ",
+                "text": "\n                SELECT /* batis:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 0\n                \n            ",
                 "span_map": [
                   [
                     0,

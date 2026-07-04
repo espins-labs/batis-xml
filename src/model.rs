@@ -155,7 +155,7 @@ pub struct SqlVariant {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlString {
-    /// Placeholders already normalized: `#{..}` → `?`, `${..}` → `__ATLAS_DYN__`.
+    /// Placeholders already normalized: `#{..}` → `?`, `${..}` → `__BATIS_DYN__`.
     pub text: String,
     /// (synthetic-text offset, original byte offset) segment-start pairs —
     /// strictly increasing.

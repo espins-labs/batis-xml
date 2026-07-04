@@ -23,7 +23,7 @@
           "variants": [
             {
               "text": {
-                "text": "\n    SELECT /* atlas:include(baseColumns) */\n    FROM demo_widget\n    WHERE widget_id = ?\n  ",
+                "text": "\n    SELECT /* batis:include(baseColumns) */\n    FROM demo_widget\n    WHERE widget_id = ?\n  ",
                 "span_map": [
                   [
                     0,
@@ -122,7 +122,7 @@
           "variants": [
             {
               "text": {
-                "text": "widget_id, widget_name, /* atlas:include(auditColumns) */",
+                "text": "widget_id, widget_name, /* batis:include(auditColumns) */",
                 "span_map": [
                   [
                     0,

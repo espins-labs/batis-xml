@@ -28,7 +28,7 @@
 use crate::model::*;
 
 /// Substitution marker for `${}` dynamic fragments (fixed by spec).
-pub(crate) const DYN_MARKER: &str = "__ATLAS_DYN__";
+pub(crate) const DYN_MARKER: &str = "__BATIS_DYN__";
 
 /// Result of [`normalize_segment`].
 ///

@@ -389,7 +389,7 @@
           }
         },
         "text": {
-          "description": "Placeholders already normalized: `#{..}` → `?`, `${..}` → `__ATLAS_DYN__`.",
+          "description": "Placeholders already normalized: `#{..}` → `?`, `${..}` → `__BATIS_DYN__`.",
           "type": "string"
         }
       }

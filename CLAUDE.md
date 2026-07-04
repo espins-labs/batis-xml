@@ -14,10 +14,12 @@ the spec can be kept in sync.
    test, implement minimally, refactor. Never implement ahead of tests.
 2. **Test naming**: `mm_<nn>_<description>` — the spec id prefix is
    mandatory (traceability).
-3. **Spec is the single source of truth**:
-   the internal design spec (maintained privately) (micro-feature tables,
-   edge cases, invariants). Read the relevant MM row *before* writing each
-   test. Working name `mybatis-mapper` there = this crate.
+3. **The internal design spec is the single source of truth** for
+   micro-feature tables, edge cases, and invariants (maintained privately,
+   not in this repo). Read the relevant MM row *before* writing each test.
+   The **public** contract, for anyone outside this working agreement, is
+   the published JSON schema (`schema/batis-xml.v1.json`) plus the
+   conformance corpus in `fixtures/` — that's what ports conform to.
 4. **No panics** on public paths, no `unwrap`/`expect` outside tests. Every
    anomaly becomes a `Diagnostic`. `parse`/`parse_bytes` never return `Err`.
 5. **Spans are original-byte offsets**, never decoded-string offsets.

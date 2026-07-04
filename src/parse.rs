@@ -2141,7 +2141,7 @@ mod tests {
         assert_eq!(vs.len(), 1);
         assert_eq!(
             vs[0].text.text,
-            "SELECT /* atlas:include(cols) */ FROM widget"
+            "SELECT /* batis:include(cols) */ FROM widget"
         );
     }
 

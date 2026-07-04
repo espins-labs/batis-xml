@@ -746,7 +746,7 @@ fn assemble(pieces: &[Piece]) -> SqlString {
             }
             Piece::Include { raw, span } => {
                 push_span_entry(&mut span_map, text.len() as u32, span.start);
-                text.push_str(&format!("/* atlas:include({raw}) */"));
+                text.push_str(&format!("/* batis:include({raw}) */"));
             }
             Piece::Prepend { value, span } => {
                 push_span_entry(&mut span_map, text.len() as u32, span.start);

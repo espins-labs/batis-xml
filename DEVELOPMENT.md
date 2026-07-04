@@ -2,13 +2,14 @@
 
 ## Design spec (single source of truth)
 
-the internal design spec (maintained privately) — micro-feature tables
-MM-01..14, invariants, definition of done. (Working name `mybatis-mapper`
-in those documents = this crate, published as `batis-xml`.)
+The internal design spec (maintained privately, not in this repo) holds the
+micro-feature tables (MM-01..14), invariants, definition of done, corpus
+survey, and performance acceptance bar (round-3 target: answer the chain
+question in 1 call, ≤ 6,315 bytes of context, 4/4 recall).
 
-Related: corpus survey the internal corpus survey; performance
-acceptance bar the internal benchmark plan (round-3 target:
-answer the chain question in 1 call, ≤ 6,315 bytes of context, 4/4 recall).
+The **public** contract -- what ports and downstream consumers actually
+conform to -- is the published JSON schema (`schema/batis-xml.v1.json`)
+plus the conformance corpus in `fixtures/`.
 
 ## Conventions
 
