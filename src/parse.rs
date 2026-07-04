@@ -228,17 +228,14 @@ fn build_mapper(
                     diagnostics.append(&mut include_diags);
                     statement.includes = includes;
 
-                    // MM-07: normalize placeholders in each text segment to
-                    // collect property_paths (from both #{}/${} forms) and
-                    // surface UnterminatedPlaceholder diagnostics. Known
-                    // limitation: text inside a nested dynamic tag (still
-                    // an opaque DynamicTag marker at this point) isn't
-                    // walked here — MM-06 recurses into those spans and
-                    // will need to normalize them too.
-                    let (property_paths, mut placeholder_diags) =
-                        extract_property_paths(&segments, dialect);
-                    diagnostics.append(&mut placeholder_diags);
-                    statement.property_paths = property_paths;
+                    // MM-06/07: flatten dynamic tags into SqlText and
+                    // normalize placeholders per text segment (including
+                    // ones nested inside <if>/<choose>/etc.) to populate
+                    // property_paths.
+                    let mut flattened = crate::flatten::flatten_body(source, dialect, &segments);
+                    diagnostics.append(&mut flattened.diagnostics);
+                    statement.sql = flattened.sql;
+                    statement.property_paths = flattened.property_paths;
 
                     statements.push(statement);
                     if truncated {
@@ -269,15 +266,17 @@ fn build_mapper(
                         diagnostics.append(&mut include_diags);
                         fragment.includes = includes;
 
-                        // MM-07: SqlFragment has no property_paths field in
-                        // the model (fragment paths are only meaningful
-                        // once inlined into a statement by MM-06), so the
-                        // paths themselves are discarded here — but
-                        // normalizing still surfaces diagnostics (e.g. an
-                        // unterminated placeholder inside a fragment body).
-                        let (_paths, mut placeholder_diags) =
-                            extract_property_paths(&segments, dialect);
-                        diagnostics.append(&mut placeholder_diags);
+                        // MM-06/07: same flattening as statements.
+                        // SqlFragment has no property_paths field (fragment
+                        // paths are only meaningful once MM-06 inlines a
+                        // fragment into a statement), so that part of the
+                        // result is discarded — but diagnostics (e.g. an
+                        // unterminated placeholder inside the fragment) and
+                        // the flattened sql text are kept.
+                        let mut flattened =
+                            crate::flatten::flatten_body(source, dialect, &segments);
+                        diagnostics.append(&mut flattened.diagnostics);
+                        fragment.sql = flattened.sql;
 
                         fragments.push(fragment);
                     }
@@ -533,30 +532,6 @@ fn lift_includes(
     (includes, diagnostics)
 }
 
-/// MM-07: runs [`crate::placeholder::normalize_segment`] over every text
-/// segment in document order, collecting `property_paths` (the normalized
-/// text and span_map are discarded — MM-06 regenerates them when it
-/// assembles the final `SqlText`).
-fn extract_property_paths(
-    segments: &[BodySegment],
-    dialect: Dialect,
-) -> (Vec<Spanned<String>>, Vec<Diagnostic>) {
-    let mut property_paths = Vec::new();
-    let mut diagnostics = Vec::new();
-
-    for segment in segments {
-        let BodySegment::Text(text) = segment else {
-            continue;
-        };
-        let mut result =
-            crate::placeholder::normalize_segment(&text.decoded, text.raw_span, dialect);
-        property_paths.append(&mut result.property_paths);
-        diagnostics.append(&mut result.diagnostics);
-    }
-
-    (property_paths, diagnostics)
-}
-
 /// MM-05: classifies a `refid` value. `${}`-driven dynamic refids are
 /// unresolvable regardless of dialect. Otherwise: MyBatis splits on the
 /// *last* dot into `ns.id` (namespaces themselves may contain dots);
@@ -650,16 +625,16 @@ fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnos
 /// came from. Per invariant 4, `raw_span` slices back to the *original*
 /// bytes (entities/CDATA markers unresolved); `decoded` is the resolved
 /// value. The two coincide only when the segment has no entities.
-struct TextSegment {
-    decoded: String,
-    raw_span: ByteSpan,
+pub(crate) struct TextSegment {
+    pub(crate) decoded: String,
+    pub(crate) raw_span: ByteSpan,
 }
 
 /// One unit of a statement body, in document order. Dynamic tags
 /// (`<if>`, `<choose>`, iBatis `<isNotEmpty>`, ...) are recorded as opaque
 /// markers — MM-06 will re-walk their span to flatten branches; MM-08 only
 /// needs to not let them break text-segment ordering or span accounting.
-enum BodySegment {
+pub(crate) enum BodySegment {
     Text(TextSegment),
     DynamicTag { name: String, span: ByteSpan },
 }
@@ -668,7 +643,7 @@ enum BodySegment {
 /// matching `End`), collecting [`BodySegment`]s. Returns `true` in the
 /// third slot when input was truncated (EOF/parse error) — the caller
 /// should stop rather than keep reading a reader that already gave up.
-fn capture_body(
+pub(crate) fn capture_body(
     source: &str,
     reader: &mut Reader<&[u8]>,
     tag_start: usize,
@@ -781,10 +756,73 @@ fn capture_body(
     }
 }
 
+/// MM-06: re-parses a `DynamicTag` marker's own span independently — the
+/// shared reader used for the statement/fragment's top-level walk has
+/// already moved past it via `skip_subtree`, so flattening re-parses from a
+/// fresh `Reader` over the marker's byte slice. Every returned span (in
+/// segments and diagnostics) is shifted back into `full_source`'s
+/// coordinate system before returning.
+pub(crate) fn capture_subtree(
+    full_source: &str,
+    span: ByteSpan,
+) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
+    let sub = &full_source[span.start as usize..span.end as usize];
+    let mut reader = Reader::from_str(sub);
+    match reader.read_event() {
+        Ok(Event::Empty(_)) => (Vec::new(), Vec::new(), false),
+        Ok(Event::Start(_)) => {
+            let (segments, diagnostics, truncated) = capture_body(sub, &mut reader, 0);
+            (
+                shift_segments(segments, span.start),
+                shift_diagnostics(diagnostics, span.start),
+                truncated,
+            )
+        }
+        // The span was already parsed once by the caller when this marker
+        // was first found, so this shouldn't happen — but no panics on
+        // public paths, so just report nothing rather than unwrap.
+        _ => (Vec::new(), Vec::new(), false),
+    }
+}
+
+fn shift_span(span: ByteSpan, offset: u32) -> ByteSpan {
+    ByteSpan {
+        start: span.start + offset,
+        end: span.end + offset,
+    }
+}
+
+fn shift_segments(segments: Vec<BodySegment>, offset: u32) -> Vec<BodySegment> {
+    segments
+        .into_iter()
+        .map(|s| match s {
+            BodySegment::Text(t) => BodySegment::Text(TextSegment {
+                decoded: t.decoded,
+                raw_span: shift_span(t.raw_span, offset),
+            }),
+            BodySegment::DynamicTag { name, span } => BodySegment::DynamicTag {
+                name,
+                span: shift_span(span, offset),
+            },
+        })
+        .collect()
+}
+
+fn shift_diagnostics(diagnostics: Vec<Diagnostic>, offset: u32) -> Vec<Diagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|d| Diagnostic {
+            code: d.code,
+            span: d.span.map(|s| shift_span(s, offset)),
+            message: d.message,
+        })
+        .collect()
+}
+
 /// Returns the first `name="value"` match (raw, span-preserving) plus a
 /// `DuplicateAttribute` diagnostic for every repeat (recovery rule 3:
 /// first value wins).
-fn attr_value_spanned(
+pub(crate) fn attr_value_spanned(
     source: &str,
     attrs: &[RawAttr],
     name: &[u8],
@@ -819,7 +857,7 @@ fn attr_value_spanned(
 
 /// A raw `name="value"` pair as byte ranges into the original source
 /// (`name` and `value` each exclude quotes/`=`).
-struct RawAttr {
+pub(crate) struct RawAttr {
     name: (usize, usize),
     value: (usize, usize),
 }
@@ -831,7 +869,7 @@ struct RawAttr {
 /// by byte — is what keeps an attribute name that happens to appear inside
 /// another attribute's quoted value (e.g. a `'...' `-quoted value
 /// containing a literal `"`) from being mistaken for a real attribute.
-fn scan_attributes(bytes: &[u8], tag_start: usize, tag_end: usize) -> Vec<RawAttr> {
+pub(crate) fn scan_attributes(bytes: &[u8], tag_start: usize, tag_end: usize) -> Vec<RawAttr> {
     let mut attrs = Vec::new();
     let mut i = tag_start;
 
@@ -1652,5 +1690,225 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.code == DiagCode::UnterminatedPlaceholder));
+    }
+
+    fn variants(sql: &SqlText) -> &[SqlVariant] {
+        match sql {
+            SqlText::Variants(v) => v,
+            SqlText::Union { .. } => panic!("expected Variants, got Union"),
+        }
+    }
+
+    #[test]
+    fn mm_06_if_present_and_absent_yields_two_variants() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<if test="a != null"> AND a = #{a}</if></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let texts: Vec<_> = vs.iter().map(|v| v.text.text.as_str()).collect();
+        assert!(texts.contains(&"SELECT 1"));
+        assert!(texts.contains(&"SELECT 1 AND a = ?"));
+        let present = vs
+            .iter()
+            .find(|v| v.text.text == "SELECT 1 AND a = ?")
+            .unwrap();
+        assert_eq!(present.conditions, vec!["a != null".to_string()]);
+        let absent = vs.iter().find(|v| v.text.text == "SELECT 1").unwrap();
+        assert!(absent.conditions.is_empty());
+        // property_paths recurse into <if> bodies now.
+        assert_eq!(mapper.statements[0].property_paths[0].value, "a");
+    }
+
+    #[test]
+    fn mm_06_choose_when_otherwise_branches() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<choose>
+                <when test="a != null"> AND a = #{a}</when>
+                <when test="b != null"> AND b = #{b}</when>
+                <otherwise> AND active = 1</otherwise>
+            </choose></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 3);
+        let by_text: std::collections::HashMap<_, _> = vs
+            .iter()
+            .map(|v| (v.text.text.clone(), v.conditions.clone()))
+            .collect();
+        assert_eq!(
+            by_text[&"SELECT 1 AND a = ?".to_string()],
+            vec!["a != null".to_string()]
+        );
+        assert_eq!(
+            by_text[&"SELECT 1 AND b = ?".to_string()],
+            vec!["b != null".to_string()]
+        );
+        assert_eq!(
+            by_text[&"SELECT 1 AND active = 1".to_string()],
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn mm_06_choose_without_otherwise_has_implicit_empty_alternative() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<choose>
+                <when test="a != null"> AND a = #{a}</when>
+            </choose></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let texts: Vec<_> = vs.iter().map(|v| v.text.text.as_str()).collect();
+        assert!(texts.contains(&"SELECT 1"));
+        assert!(texts.contains(&"SELECT 1 AND a = ?"));
+    }
+
+    #[test]
+    fn mm_06_cartesian_product_of_sibling_ifs() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<if test="a"> AND a</if><if test="b"> AND b</if></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 4); // 2 x 2
+        let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
+        assert!(texts.contains("SELECT 1"));
+        assert!(texts.contains("SELECT 1 AND a"));
+        assert!(texts.contains("SELECT 1 AND b"));
+        assert!(texts.contains("SELECT 1 AND a AND b"));
+    }
+
+    #[test]
+    fn mm_06_nested_if_inside_transparent_container_still_branches() {
+        // <where> has no special wrapper semantics yet (MM-06b) but must
+        // still be recursed into so the nested <if> branches correctly.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where><if test="a != null"> AND a = #{a}</if></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
+        assert!(texts.contains("SELECT 1"));
+        assert!(texts.contains("SELECT 1 AND a = ?"));
+    }
+
+    #[test]
+    fn mm_06_include_marker_becomes_comment_token() {
+        let source = r#"<mapper namespace="x">
+            <sql id="cols">id, name</sql>
+            <select id="a">SELECT <include refid="cols"/> FROM widget</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(
+            vs[0].text.text,
+            "SELECT /* atlas:include(cols) */ FROM widget"
+        );
+    }
+
+    #[test]
+    fn mm_06_fragment_sql_is_also_flattened() {
+        let source = r#"<mapper namespace="x">
+            <sql id="cond"><if test="a != null"> AND a = #{a}</if></sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.fragments[0].sql);
+        assert_eq!(vs.len(), 2);
+    }
+
+    #[test]
+    fn mm_06_span_map_strictly_increasing_in_assembled_variant() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">WHERE a = #{a} AND b = #{b}<if test="c != null"> AND c = #{c}</if></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        for v in vs {
+            assert!(v.text.span_map.windows(2).all(|w| w[0].0 < w[1].0));
+            assert_eq!(v.text.span_map[0].0, 0);
+        }
+    }
+
+    /// Builds a `<select>` body containing a `<choose>` with `when_count`
+    /// `<when>` branches and no `<otherwise>` — exactly `when_count + 1`
+    /// alternatives (see MM-06a's `<choose>` branch algebra).
+    fn choose_with_whens(when_count: usize) -> String {
+        let whens: String = (0..when_count)
+            .map(|i| format!(r#"<when test="c{i}">t{i}</when>"#))
+            .collect();
+        format!(
+            r#"<mapper namespace="x"><select id="a"><choose>{whens}</choose></select></mapper>"#
+        )
+    }
+
+    #[test]
+    fn mm_06_branch_limit_boundary_31_stays_variants() {
+        let source = choose_with_whens(30); // 30 whens + implicit empty = 31
+        let result = parse_str(&source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(variants(&mapper.statements[0].sql).len(), 31);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::BranchLimitExceeded));
+    }
+
+    #[test]
+    fn mm_06_branch_limit_boundary_32_stays_variants() {
+        let source = choose_with_whens(31); // 31 whens + implicit empty = 32
+        let result = parse_str(&source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(variants(&mapper.statements[0].sql).len(), 32);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::BranchLimitExceeded));
+    }
+
+    #[test]
+    fn mm_06_branch_limit_boundary_33_falls_back_to_union() {
+        let source = choose_with_whens(32); // 32 whens + implicit empty = 33
+        let result = parse_str(&source);
+        let mapper = result.mapper.expect("mapper root");
+        match &mapper.statements[0].sql {
+            SqlText::Union { branch_count, .. } => assert_eq!(*branch_count, 33),
+            SqlText::Variants(_) => panic!("expected Union at 33 branches"),
+        }
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::BranchLimitExceeded));
+    }
+
+    #[test]
+    fn mm_06_full_flattening_snapshot() {
+        let source = r#"<mapper namespace="com.example.WidgetMapper">
+            <sql id="baseCols">id, name</sql>
+            <select id="selectWidget">
+                SELECT <include refid="baseCols"/> FROM widget
+                <where>
+                    <if test="name != null">AND name = #{name}</if>
+                    <choose>
+                        <when test="active"> AND active = 1</when>
+                        <otherwise> AND active = 0</otherwise>
+                    </choose>
+                </where>
+            </select>
+        </mapper>"#;
+        let result = parse_str(source);
+        insta::assert_json_snapshot!(result);
     }
 }

@@ -1,0 +1,264 @@
+---
+source: src/parse.rs
+expression: result
+---
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.WidgetMapper",
+      "span": {
+        "start": 19,
+        "end": 43
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 116,
+            "end": 128
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    \n                     AND active = 1\n                \n            ",
+                "span_map": [
+                  [
+                    0,
+                    130
+                  ],
+                  [
+                    24,
+                    154
+                  ],
+                  [
+                    53,
+                    181
+                  ],
+                  [
+                    82,
+                    217
+                  ],
+                  [
+                    103,
+                    285
+                  ],
+                  [
+                    124,
+                    359
+                  ],
+                  [
+                    139,
+                    474
+                  ],
+                  [
+                    156,
+                    499
+                  ]
+                ]
+              },
+              "conditions": [
+                "active"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    \n                     AND active = 0\n                \n            ",
+                "span_map": [
+                  [
+                    0,
+                    130
+                  ],
+                  [
+                    24,
+                    154
+                  ],
+                  [
+                    53,
+                    181
+                  ],
+                  [
+                    82,
+                    217
+                  ],
+                  [
+                    103,
+                    285
+                  ],
+                  [
+                    124,
+                    417
+                  ],
+                  [
+                    139,
+                    474
+                  ],
+                  [
+                    156,
+                    499
+                  ]
+                ]
+              },
+              "conditions": []
+            },
+            {
+              "text": {
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    AND name = ?\n                     AND active = 1\n                \n            ",
+                "span_map": [
+                  [
+                    0,
+                    130
+                  ],
+                  [
+                    24,
+                    154
+                  ],
+                  [
+                    53,
+                    181
+                  ],
+                  [
+                    82,
+                    217
+                  ],
+                  [
+                    103,
+                    262
+                  ],
+                  [
+                    115,
+                    285
+                  ],
+                  [
+                    136,
+                    359
+                  ],
+                  [
+                    151,
+                    474
+                  ],
+                  [
+                    168,
+                    499
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null",
+                "active"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    AND name = ?\n                     AND active = 0\n                \n            ",
+                "span_map": [
+                  [
+                    0,
+                    130
+                  ],
+                  [
+                    24,
+                    154
+                  ],
+                  [
+                    53,
+                    181
+                  ],
+                  [
+                    82,
+                    217
+                  ],
+                  [
+                    103,
+                    262
+                  ],
+                  [
+                    115,
+                    285
+                  ],
+                  [
+                    136,
+                    417
+                  ],
+                  [
+                    151,
+                    474
+                  ],
+                  [
+                    168,
+                    499
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null"
+              ]
+            }
+          ]
+        },
+        "includes": [
+          {
+            "value": {
+              "raw": "baseCols",
+              "target": {
+                "local": "baseCols"
+              }
+            },
+            "span": {
+              "start": 154,
+              "end": 181
+            }
+          }
+        ],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "name",
+            "span": {
+              "start": 275,
+              "end": 279
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [
+      {
+        "id": {
+          "value": "baseCols",
+          "span": {
+            "start": 67,
+            "end": 75
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "id, name",
+                "span_map": [
+                  [
+                    0,
+                    77
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": []
+      }
+    ],
+    "result_maps": []
+  },
+  "diagnostics": []
+}
