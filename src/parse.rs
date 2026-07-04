@@ -39,8 +39,13 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 };
                 return match dialect {
                     Some(dialect) => {
-                        let (mapper, diagnostics) =
-                            build_mapper(source, &mut reader, start as usize, end as usize);
+                        let (mapper, diagnostics) = build_mapper(
+                            source,
+                            &mut reader,
+                            start as usize,
+                            end as usize,
+                            dialect,
+                        );
                         ParseResult {
                             dialect,
                             mapper: Some(mapper),
@@ -165,6 +170,7 @@ fn build_mapper(
     reader: &mut Reader<&[u8]>,
     root_start: usize,
     root_tag_end: usize,
+    dialect: Dialect,
 ) -> (Mapper, Vec<Diagnostic>) {
     let root_attrs = scan_attributes(source.as_bytes(), root_start, root_tag_end);
     let (namespace, mut diagnostics) = attr_value_spanned(source, &root_attrs, b"namespace");
@@ -200,7 +206,7 @@ fn build_mapper(
                 let local_name = local_name.as_ref();
 
                 if let Some(kind) = statement_kind(local_name) {
-                    let (statement, mut diags) = build_statement(
+                    let (mut statement, mut diags) = build_statement(
                         source,
                         kind,
                         child_start as usize,
@@ -208,15 +214,21 @@ fn build_mapper(
                         &mut seen_ids,
                     );
                     diagnostics.append(&mut diags);
-                    statements.push(statement);
 
                     // MM-08: walks the body for span-preserving text/CDATA
                     // segments (also finds the matching End, like
                     // skip_subtree). Segments feed MM-06/07 assembly later;
                     // Statement.sql stays a placeholder until then.
-                    let (_segments, mut body_diags, truncated) =
+                    let (segments, mut body_diags, truncated) =
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
+
+                    // MM-05: lift <include> markers found in the body.
+                    let (includes, mut include_diags) = lift_includes(source, dialect, &segments);
+                    diagnostics.append(&mut include_diags);
+                    statement.includes = includes;
+
+                    statements.push(statement);
                     if truncated {
                         break;
                     }
@@ -231,18 +243,21 @@ fn build_mapper(
                         &mut seen_fragment_ids,
                     );
                     diagnostics.append(&mut diags);
-                    if let Some(fragment) = fragment {
-                        fragments.push(fragment);
-                    }
 
                     // Same body walk as statements — MM-04's "nested
                     // include" edge case just means this must not choke on
-                    // <include> tags; they land as opaque DynamicTag
-                    // markers here too. Lifting them into IncludeRef is
-                    // MM-05's job.
-                    let (_segments, mut body_diags, truncated) =
+                    // <include> tags; MM-05 lifts them below.
+                    let (segments, mut body_diags, truncated) =
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
+
+                    if let Some(mut fragment) = fragment {
+                        let (includes, mut include_diags) =
+                            lift_includes(source, dialect, &segments);
+                        diagnostics.append(&mut include_diags);
+                        fragment.includes = includes;
+                        fragments.push(fragment);
+                    }
                     if truncated {
                         break;
                     }
@@ -299,6 +314,17 @@ fn build_mapper(
             }
             _ => continue,
         }
+    }
+
+    // MM-05: intra-file dangling check. Only Local targets are checked —
+    // Qualified (cross-file) and Dynamic (unresolvable) are the consumer's
+    // job. Done after the full walk so forward references (a statement
+    // above the <sql> it includes) resolve correctly.
+    for statement in &statements {
+        check_dangling_local_refids(&statement.includes, &seen_fragment_ids, &mut diagnostics);
+    }
+    for fragment in &fragments {
+        check_dangling_local_refids(&fragment.includes, &seen_fragment_ids, &mut diagnostics);
     }
 
     // NOTE: "unused fragment" detection (spec edge case) needs
@@ -435,6 +461,98 @@ fn build_fragment(
     };
 
     (fragment, diagnostics)
+}
+
+/// MM-05: lifts `<include>` [`BodySegment::DynamicTag`] markers (already
+/// found by `capture_body`) into `Spanned<IncludeRef>`. Reruns
+/// `scan_attributes` over the marker's span to read `refid` — safe because
+/// the tokenizer stops at the tag's first `>`, so a full-subtree span
+/// (which is all a marker carries) is fine to pass.
+fn lift_includes(
+    source: &str,
+    dialect: Dialect,
+    segments: &[BodySegment],
+) -> (Vec<Spanned<IncludeRef>>, Vec<Diagnostic>) {
+    let mut includes = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for segment in segments {
+        let BodySegment::DynamicTag { name, span } = segment else {
+            continue;
+        };
+        if name != "include" {
+            continue;
+        }
+
+        let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
+        let (refid, mut diags) = attr_value_spanned(source, &attrs, b"refid");
+        diagnostics.append(&mut diags);
+
+        match refid {
+            Some(refid) => {
+                let target = classify_include(&refid.value, dialect);
+                includes.push(Spanned {
+                    value: IncludeRef {
+                        raw: refid.value,
+                        target,
+                    },
+                    span: *span,
+                });
+            }
+            None => diagnostics.push(Diagnostic {
+                code: DiagCode::DanglingRefid,
+                span: Some(*span),
+                message: "<include> is missing a refid attribute".to_string(),
+            }),
+        }
+    }
+
+    (includes, diagnostics)
+}
+
+/// MM-05: classifies a `refid` value. `${}`-driven dynamic refids are
+/// unresolvable regardless of dialect. Otherwise: MyBatis splits on the
+/// *last* dot into `ns.id` (namespaces themselves may contain dots);
+/// iBatis has no cross-namespace include syntax — a dot there is the
+/// normal local-id convention (`WidgetDAO.commonWhere`) and always stays
+/// `Local`. `raw` is preserved either way so consumers can re-derive.
+fn classify_include(raw: &str, dialect: Dialect) -> IncludeTarget {
+    if raw.contains("${") {
+        return IncludeTarget::Dynamic;
+    }
+    if dialect == Dialect::Mybatis {
+        if let Some(dot) = raw.rfind('.') {
+            return IncludeTarget::Qualified {
+                ns: raw[..dot].to_string(),
+                id: raw[dot + 1..].to_string(),
+            };
+        }
+    }
+    IncludeTarget::Local(raw.to_string())
+}
+
+/// MM-05: intra-file dangling check for `Local` include targets only —
+/// `Qualified` (cross-file) and `Dynamic` (unresolvable at parse time) are
+/// the consumer's job.
+fn check_dangling_local_refids(
+    includes: &[Spanned<IncludeRef>],
+    fragment_ids: &HashSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for include in includes {
+        if let IncludeTarget::Local(id) = &include.value.target {
+            if !fragment_ids.contains(id) {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::DanglingRefid,
+                    span: Some(include.span),
+                    message: format!(
+                        "<include refid=\"{}\"> has no matching <sql> fragment in this file",
+                        include.value.raw
+                    ),
+                });
+            }
+        }
+    }
 }
 
 /// Outcome of consuming a subtree after its opening `Start` event.
@@ -1287,6 +1405,154 @@ mod tests {
             .map(|f| f.id.value.clone())
             .collect();
         assert_eq!(ids, vec!["withInclude", "afterInclude"]);
-        assert!(mapper.fragments[0].includes.is_empty()); // MM-05's job
+        // MM-05 lifts the marker into an IncludeRef; "otherFragment" isn't
+        // defined in this file, so it's also flagged as dangling.
+        assert_eq!(mapper.fragments[0].includes.len(), 1);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_local_include_is_lifted_and_resolves() {
+        let source = r#"<mapper namespace="x">
+            <sql id="widgetCols">id, name</sql>
+            <select id="selectWidget">SELECT <include refid="widgetCols"/> FROM widget</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements[0].includes.len(), 1);
+        let include = &mapper.statements[0].includes[0];
+        assert_eq!(include.value.raw, "widgetCols");
+        assert_eq!(
+            include.value.target,
+            IncludeTarget::Local("widgetCols".to_string())
+        );
+        let ByteSpan { start, end } = include.span;
+        assert_eq!(
+            &source[start as usize..end as usize],
+            "<include refid=\"widgetCols\"/>"
+        );
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_mybatis_qualified_refid_splits_on_last_dot() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT <include refid="com.example.other.Mapper.widgetCols"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let include = &mapper.statements[0].includes[0];
+        assert_eq!(
+            include.value.target,
+            IncludeTarget::Qualified {
+                ns: "com.example.other.Mapper".to_string(),
+                id: "widgetCols".to_string(),
+            }
+        );
+        assert_eq!(include.value.raw, "com.example.other.Mapper.widgetCols");
+        // Qualified (cross-file) targets are never dangling-checked here.
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_ibatis_dot_containing_refid_stays_local_not_qualified() {
+        // iBatis has no cross-namespace include syntax — a dot in a refid
+        // is the ordinary local-id convention, not a namespace separator.
+        let source = r#"<sqlMap>
+            <sql id="WidgetDAO.commonWhere">use_yn = 'Y'</sql>
+            <select id="a">SELECT * <include refid="WidgetDAO.commonWhere"/></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let include = &mapper.statements[0].includes[0];
+        assert_eq!(
+            include.value.target,
+            IncludeTarget::Local("WidgetDAO.commonWhere".to_string())
+        );
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_dynamic_refid_is_unresolvable() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT <include refid="${dynamicRefId}"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let include = &mapper.statements[0].includes[0];
+        assert_eq!(include.value.target, IncludeTarget::Dynamic);
+        assert_eq!(include.value.raw, "${dynamicRefId}");
+        // Unresolvable at parse time — never dangling-checked.
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_self_reference_is_recorded_without_hanging() {
+        let source = r#"<mapper namespace="x">
+            <sql id="a">base <include refid="a"/></sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 1);
+        assert_eq!(mapper.fragments[0].includes.len(), 1);
+        assert_eq!(
+            mapper.fragments[0].includes[0].value.target,
+            IncludeTarget::Local("a".to_string())
+        );
+        // Self-reference to a fragment id that DOES exist (itself) — not
+        // dangling. This crate never expands includes, so no loop risk.
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_05_dangling_local_refid_is_reported() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT <include refid="doesNotExist"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements[0].includes.len(), 1);
+        let dangling: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::DanglingRefid)
+            .collect();
+        assert_eq!(dangling.len(), 1);
+    }
+
+    #[test]
+    fn mm_05_missing_refid_attribute_reports_dangling_refid() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT <include/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert!(mapper.statements[0].includes.is_empty());
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::DanglingRefid)
+                .count(),
+            1
+        );
     }
 }
