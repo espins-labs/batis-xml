@@ -13,21 +13,21 @@
 //! (`SqlString::span_map`) so downstream SQL analysis can point at the XML
 //! source.
 //!
-//! ## MM-06a scope
+//! ## MM-06a/06b scope
 //!
-//! `<if>` and `<choose>/<when>/<otherwise>` get real branch semantics.
-//! Every other dynamic tag (`<where>`, `<set>`, `<trim>`, `<foreach>`,
-//! `<bind>`, and all iBatis tags) is a *transparent passthrough* for now —
-//! its body is recursed into (so nested `<if>` inside e.g. `<where>` still
-//! branches correctly) but the container itself contributes no wrapper
-//! text and no branch factor of its own. MM-06b (MyBatis wrappers) and
-//! MM-06c (iBatis tags) replace this passthrough with real semantics.
+//! `<if>` and `<choose>/<when>/<otherwise>` have real branch semantics
+//! (MM-06a). `<where>`/`<set>`/`<trim>`/`<foreach>`/`<bind>` have real
+//! wrapper semantics (MM-06b, see [`expand_where`] etc.). Every remaining
+//! dynamic tag (all iBatis tags) is still a *transparent passthrough* —
+//! recursed into (so nested `<if>` still branches) but contributes no
+//! wrapper text or branch factor of its own. MM-06c replaces this default
+//! for iBatis tags.
 //!
-//! Known limitation: `Statement.includes`/`SqlFragment.includes` (MM-05)
-//! only lift `<include>` markers found at the *top level* of a body — one
-//! nested inside `<if>`/`<choose>`/etc. is invisible there (though its
-//! text still renders correctly here, as an `/* atlas:include(id) */`
-//! token). Extending MM-05's lift to recurse is not in this slice's scope.
+//! `<include>` markers found anywhere during this recursive descent
+//! (top-level or nested) are collected into [`FlattenResult::found_includes`]
+//! — `build_mapper` (parse.rs) merges these with `lift_includes`'s
+//! top-level-only pass, deduping by span, to populate
+//! `Statement.includes`/`SqlFragment.includes`.
 //!
 //! ## Why each text segment is normalized exactly once
 //!
@@ -41,7 +41,9 @@
 //! normalization.
 
 use crate::model::*;
-use crate::parse::{attr_value_spanned, capture_subtree, scan_attributes, BodySegment};
+use crate::parse::{
+    attr_value_spanned, capture_subtree, classify_include, scan_attributes, BodySegment,
+};
 use crate::placeholder;
 
 /// Per-statement cap on flattened candidates (fixed by spec).
@@ -51,6 +53,12 @@ pub(crate) struct FlattenResult {
     pub(crate) sql: SqlText,
     pub(crate) property_paths: Vec<Spanned<String>>,
     pub(crate) diagnostics: Vec<Diagnostic>,
+    /// `<include>` markers found anywhere in the body (top-level and
+    /// nested inside dynamic tags). A missing `refid` is *not* diagnosed
+    /// here — `lift_includes`'s top-level pass already covers that for
+    /// top-level markers; a nested `<include>` missing `refid` is a known,
+    /// minor gap (documented, not diagnosed twice).
+    pub(crate) found_includes: Vec<Spanned<IncludeRef>>,
 }
 
 /// One ordered, already-normalized unit of assembled text for a single
@@ -82,6 +90,16 @@ fn empty_alt() -> Alt {
     }
 }
 
+/// Mutable side-channels threaded through the whole recursive descent, so
+/// `flatten_segments` and the per-tag `expand_*` helpers don't grow an
+/// ever-longer parameter list as more tag types gain diagnostics/paths.
+struct Ctx {
+    dialect: Dialect,
+    diagnostics: Vec<Diagnostic>,
+    property_paths: Vec<Spanned<String>>,
+    found_includes: Vec<Spanned<IncludeRef>>,
+}
+
 /// Flattens a statement or fragment body into its final [`SqlText`],
 /// gathering `property_paths` from every text segment visited (top-level
 /// *and* nested inside dynamic tags — this supersedes MM-07's top-level-only
@@ -92,16 +110,14 @@ pub(crate) fn flatten_body(
     dialect: Dialect,
     segments: &[BodySegment],
 ) -> FlattenResult {
-    let mut attempt_diagnostics = Vec::new();
-    let mut attempt_paths = Vec::new();
-
-    match flatten_segments(
-        source,
+    let mut attempt = Ctx {
         dialect,
-        segments,
-        &mut attempt_diagnostics,
-        &mut attempt_paths,
-    ) {
+        diagnostics: Vec::new(),
+        property_paths: Vec::new(),
+        found_includes: Vec::new(),
+    };
+
+    match flatten_segments(source, segments, &mut attempt) {
         Ok(alts) => {
             let variants = alts
                 .into_iter()
@@ -112,25 +128,25 @@ pub(crate) fn flatten_body(
                 .collect();
             FlattenResult {
                 sql: SqlText::Variants(variants),
-                property_paths: attempt_paths,
-                diagnostics: attempt_diagnostics,
+                property_paths: attempt.property_paths,
+                diagnostics: attempt.diagnostics,
+                found_includes: attempt.found_includes,
             }
         }
         Err(branch_count) => {
             // The cartesian attempt above bailed out partway through, so
-            // its diagnostics/property_paths only cover part of the tree —
-            // discard them and do a fresh non-combinatorial pass instead.
-            let mut diagnostics = Vec::new();
-            let mut property_paths = Vec::new();
-            let pieces = union_walk(
-                source,
+            // its diagnostics/property_paths/found_includes only cover
+            // part of the tree — discard them and do a fresh
+            // non-combinatorial pass instead.
+            let mut ctx = Ctx {
                 dialect,
-                segments,
-                &mut diagnostics,
-                &mut property_paths,
-            );
+                diagnostics: Vec::new(),
+                property_paths: Vec::new(),
+                found_includes: Vec::new(),
+            };
+            let pieces = union_walk(source, segments, &mut ctx);
             let text = assemble(&pieces);
-            diagnostics.push(Diagnostic {
+            ctx.diagnostics.push(Diagnostic {
                 code: DiagCode::BranchLimitExceeded,
                 span: None, // whole-body scope; no single span represents it
                 message: format!(
@@ -142,8 +158,9 @@ pub(crate) fn flatten_body(
                     text,
                     branch_count: branch_count.min(u32::MAX as u64) as u32,
                 },
-                property_paths,
-                diagnostics,
+                property_paths: ctx.property_paths,
+                diagnostics: ctx.diagnostics,
+                found_includes: ctx.found_includes,
             }
         }
     }
@@ -155,10 +172,8 @@ pub(crate) fn flatten_body(
 /// aborts cartesian expansion and falls back to [`union_walk`].
 fn flatten_segments(
     source: &str,
-    dialect: Dialect,
     segments: &[BodySegment],
-    diagnostics: &mut Vec<Diagnostic>,
-    property_paths: &mut Vec<Spanned<String>>,
+    ctx: &mut Ctx,
 ) -> Result<Vec<Alt>, u64> {
     let mut acc = vec![empty_alt()];
 
@@ -166,9 +181,9 @@ fn flatten_segments(
         match segment {
             BodySegment::Text(text) => {
                 let mut result =
-                    placeholder::normalize_segment(&text.decoded, text.raw_span, dialect);
-                property_paths.append(&mut result.property_paths);
-                diagnostics.append(&mut result.diagnostics);
+                    placeholder::normalize_segment(&text.decoded, text.raw_span, ctx.dialect);
+                ctx.property_paths.append(&mut result.property_paths);
+                ctx.diagnostics.append(&mut result.diagnostics);
                 let piece = Piece::Normalized {
                     text: result.text,
                     span_map: result.span_map,
@@ -177,29 +192,57 @@ fn flatten_segments(
                     alt.pieces.push(piece.clone());
                 }
             }
-            BodySegment::DynamicTag { name, span } if name == "include" => {
-                let raw = read_refid(source, *span);
-                for alt in &mut acc {
-                    alt.pieces.push(Piece::Include {
-                        raw: raw.clone(),
-                        span: *span,
-                    });
+            BodySegment::DynamicTag { name, span } => match name.as_str() {
+                "include" => {
+                    record_include(source, *span, ctx);
+                    let raw = read_refid(source, *span);
+                    for alt in &mut acc {
+                        alt.pieces.push(Piece::Include {
+                            raw: raw.clone(),
+                            span: *span,
+                        });
+                    }
                 }
-            }
-            BodySegment::DynamicTag { name, span } if name == "if" => {
-                let local = expand_if(source, dialect, *span, diagnostics, property_paths)?;
-                acc = try_combine(&acc, &local)?;
-            }
-            BodySegment::DynamicTag { name, span } if name == "choose" => {
-                let local = expand_choose(source, dialect, *span, diagnostics, property_paths)?;
-                acc = try_combine(&acc, &local)?;
-            }
-            BodySegment::DynamicTag { span, .. } => {
-                // Transparent passthrough — see module docs.
-                let local =
-                    expand_transparent(source, dialect, *span, diagnostics, property_paths)?;
-                acc = try_combine(&acc, &local)?;
-            }
+                "bind" => {
+                    // Contributes no text; its expression lives in an
+                    // attribute (`value`), never in a Text/CDATA event, so
+                    // MM-07's normalization never sees it — record it here.
+                    let value = read_attr(source, *span, b"value", ctx);
+                    if !value.is_empty() {
+                        ctx.property_paths.push(Spanned { value, span: *span });
+                    }
+                }
+                "if" => {
+                    let local = expand_if(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "choose" => {
+                    let local = expand_choose(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "where" => {
+                    let local = expand_where(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "set" => {
+                    let local = expand_set(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "trim" => {
+                    let local = expand_trim(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                "foreach" => {
+                    let local = expand_foreach(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+                _ => {
+                    // Transparent passthrough — iBatis tags (MM-06c) land
+                    // here for now.
+                    let local = expand_transparent(source, *span, ctx)?;
+                    acc = try_combine(&acc, &local)?;
+                }
+            },
         }
     }
 
@@ -209,24 +252,12 @@ fn flatten_segments(
 /// `<if test="...">body</if>` → 2 alternatives: absent (empty, no
 /// condition) and present (body's own alternatives, each prefixed with
 /// `test`).
-fn expand_if(
-    source: &str,
-    dialect: Dialect,
-    span: ByteSpan,
-    diagnostics: &mut Vec<Diagnostic>,
-    property_paths: &mut Vec<Spanned<String>>,
-) -> Result<Vec<Alt>, u64> {
-    let test_value = read_attr(source, span, b"test", diagnostics);
+fn expand_if(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let test_value = read_attr(source, span, b"test", ctx);
 
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
-    diagnostics.append(&mut inner_diags);
-    let inner_alts = flatten_segments(
-        source,
-        dialect,
-        &inner_segments,
-        diagnostics,
-        property_paths,
-    )?;
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
 
     let mut local = vec![empty_alt()];
     for alt in inner_alts {
@@ -246,15 +277,9 @@ fn expand_if(
 
 /// `<choose>` with N `<when>` + optional `<otherwise>` → N+1 alternatives
 /// (without `<otherwise>`, one alternative is empty).
-fn expand_choose(
-    source: &str,
-    dialect: Dialect,
-    span: ByteSpan,
-    diagnostics: &mut Vec<Diagnostic>,
-    property_paths: &mut Vec<Spanned<String>>,
-) -> Result<Vec<Alt>, u64> {
+fn expand_choose(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
-    diagnostics.append(&mut inner_diags);
+    ctx.diagnostics.append(&mut inner_diags);
 
     let mut local = Vec::new();
     let mut has_otherwise = false;
@@ -269,11 +294,10 @@ fn expand_choose(
         };
 
         if name == "when" {
-            let test_value = read_attr(source, *child_span, b"test", diagnostics);
+            let test_value = read_attr(source, *child_span, b"test", ctx);
             let (when_segments, mut when_diags, _t) = capture_subtree(source, *child_span);
-            diagnostics.append(&mut when_diags);
-            let when_alts =
-                flatten_segments(source, dialect, &when_segments, diagnostics, property_paths)?;
+            ctx.diagnostics.append(&mut when_diags);
+            let when_alts = flatten_segments(source, &when_segments, ctx)?;
             for alt in when_alts {
                 let mut conditions = vec![test_value.clone()];
                 conditions.extend(alt.conditions);
@@ -285,14 +309,8 @@ fn expand_choose(
         } else if name == "otherwise" {
             has_otherwise = true;
             let (otherwise_segments, mut o_diags, _t) = capture_subtree(source, *child_span);
-            diagnostics.append(&mut o_diags);
-            local.extend(flatten_segments(
-                source,
-                dialect,
-                &otherwise_segments,
-                diagnostics,
-                property_paths,
-            )?);
+            ctx.diagnostics.append(&mut o_diags);
+            local.extend(flatten_segments(source, &otherwise_segments, ctx)?);
         }
 
         if local.len() as u64 > BRANCH_LIMIT as u64 {
@@ -306,25 +324,136 @@ fn expand_choose(
     Ok(local)
 }
 
-/// Any dynamic tag MM-06a doesn't yet give real semantics to: recurse into
-/// its body and use that body's own alternatives as-is, with no wrapper
-/// text and no branch factor contributed by the container itself.
-fn expand_transparent(
-    source: &str,
-    dialect: Dialect,
-    span: ByteSpan,
-    diagnostics: &mut Vec<Diagnostic>,
-    property_paths: &mut Vec<Spanned<String>>,
-) -> Result<Vec<Alt>, u64> {
+/// Any dynamic tag with no special semantics yet: recurse into its body
+/// and use that body's own alternatives as-is, with no wrapper text and no
+/// branch factor contributed by the container itself.
+fn expand_transparent(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
-    diagnostics.append(&mut inner_diags);
-    flatten_segments(
-        source,
-        dialect,
-        &inner_segments,
-        diagnostics,
-        property_paths,
-    )
+    ctx.diagnostics.append(&mut inner_diags);
+    flatten_segments(source, &inner_segments, ctx)
+}
+
+/// `<where>`: for each inner-body alternative, if its assembled text is
+/// empty/whitespace-only, the wrapper contributes nothing (no `WHERE` at
+/// all); otherwise strip one leading `AND`/`OR` (case-insensitive, word
+/// boundary) and prepend `WHERE `.
+fn expand_where(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|alt| {
+            let inner_sql = assemble(&alt.pieces);
+            let pieces = if inner_sql.text.trim().is_empty() {
+                Vec::new()
+            } else {
+                let strip_n = leading_and_or_strip_len(&inner_sql.text);
+                vec![to_piece(with_prefix(
+                    inner_sql, span.start, strip_n, "WHERE ",
+                ))]
+            };
+            Alt {
+                pieces,
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
+}
+
+/// `<set>`: same empty-body suppression as `<where>`; otherwise prepend
+/// `SET ` and strip one trailing comma (and the whitespace after it).
+fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|alt| {
+            let inner_sql = assemble(&alt.pieces);
+            let pieces = if inner_sql.text.trim().is_empty() {
+                Vec::new()
+            } else {
+                let trailing_strip = trailing_comma_strip_len(&inner_sql.text);
+                let stripped = with_suffix_strip(inner_sql, trailing_strip);
+                vec![to_piece(with_prefix(stripped, span.start, 0, "SET "))]
+            };
+            Alt {
+                pieces,
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
+}
+
+/// `<trim prefix suffix prefixOverrides suffixOverrides>`: prefix/suffix
+/// are added only when the inner text is non-empty; `*Overrides` are
+/// pipe-separated alternative lists (`"AND |OR "`), of which at most one
+/// match is stripped from each side.
+fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let prefix = read_attr(source, span, b"prefix", ctx);
+    let suffix = read_attr(source, span, b"suffix", ctx);
+    let prefix_overrides = split_overrides(&read_attr(source, span, b"prefixOverrides", ctx));
+    let suffix_overrides = split_overrides(&read_attr(source, span, b"suffixOverrides", ctx));
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|alt| {
+            let inner_sql = assemble(&alt.pieces);
+            let pieces = if inner_sql.text.trim().is_empty() {
+                Vec::new()
+            } else {
+                let lead_strip = leading_override_strip_len(&inner_sql.text, &prefix_overrides);
+                let trail_strip = trailing_override_strip_len(&inner_sql.text, &suffix_overrides);
+                let with_lead = with_prefix(inner_sql, span.start, lead_strip, &prefix);
+                let trimmed = with_suffix_strip(with_lead, trail_strip);
+                vec![to_piece(with_suffix(trimmed, span.start, &suffix))]
+            };
+            Alt {
+                pieces,
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
+}
+
+/// `<foreach open close separator>`: a repetition, not a branch — each
+/// inner alternative is rendered once, wrapped with `open`/`close` (no
+/// stripping); `separator` describes repeated-item joining at runtime and
+/// is not representable statically, so it's ignored here.
+fn expand_foreach(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
+    let open = read_attr(source, span, b"open", ctx);
+    let close = read_attr(source, span, b"close", ctx);
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    ctx.diagnostics.append(&mut inner_diags);
+    let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
+
+    let local = inner_alts
+        .into_iter()
+        .map(|alt| {
+            let inner_sql = assemble(&alt.pieces);
+            let wrapped = with_suffix(
+                with_prefix(inner_sql, span.start, 0, &open),
+                span.start,
+                &close,
+            );
+            Alt {
+                pieces: vec![to_piece(wrapped)],
+                conditions: alt.conditions,
+            }
+        })
+        .collect();
+    Ok(local)
 }
 
 /// Cartesian-combines two alternative lists, bailing out with the (not
@@ -352,37 +481,40 @@ fn try_combine(acc: &[Alt], local: &[Alt]) -> Result<Vec<Alt>, u64> {
 /// concatenated once" rather than a syntactically valid query. Structurally
 /// a single linear walk, so (unlike the cartesian path) each segment is
 /// visited exactly once here regardless of tree shape — safe to normalize
-/// directly.
-fn union_walk(
-    source: &str,
-    dialect: Dialect,
-    segments: &[BodySegment],
-    diagnostics: &mut Vec<Diagnostic>,
-    property_paths: &mut Vec<Spanned<String>>,
-) -> Vec<Piece> {
+/// directly. Wrapper tags are treated the same as transparent containers
+/// here (their prefix/suffix semantics only make sense per-branch, and
+/// there are no branches in a union).
+fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piece> {
     let mut pieces = Vec::new();
 
     for segment in segments {
         match segment {
             BodySegment::Text(text) => {
                 let mut result =
-                    placeholder::normalize_segment(&text.decoded, text.raw_span, dialect);
-                property_paths.append(&mut result.property_paths);
-                diagnostics.append(&mut result.diagnostics);
+                    placeholder::normalize_segment(&text.decoded, text.raw_span, ctx.dialect);
+                ctx.property_paths.append(&mut result.property_paths);
+                ctx.diagnostics.append(&mut result.diagnostics);
                 pieces.push(Piece::Normalized {
                     text: result.text,
                     span_map: result.span_map,
                 });
             }
             BodySegment::DynamicTag { name, span } if name == "include" => {
+                record_include(source, *span, ctx);
                 pieces.push(Piece::Include {
                     raw: read_refid(source, *span),
                     span: *span,
                 });
             }
+            BodySegment::DynamicTag { name, span } if name == "bind" => {
+                let value = read_attr(source, *span, b"value", ctx);
+                if !value.is_empty() {
+                    ctx.property_paths.push(Spanned { value, span: *span });
+                }
+            }
             BodySegment::DynamicTag { name, span } if name == "choose" => {
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
-                diagnostics.append(&mut d);
+                ctx.diagnostics.append(&mut d);
                 for child in &inner_segments {
                     if let BodySegment::DynamicTag {
                         name: child_name,
@@ -391,28 +523,16 @@ fn union_walk(
                     {
                         if child_name == "when" || child_name == "otherwise" {
                             let (child_segments, mut cd, _t) = capture_subtree(source, *child_span);
-                            diagnostics.append(&mut cd);
-                            pieces.extend(union_walk(
-                                source,
-                                dialect,
-                                &child_segments,
-                                diagnostics,
-                                property_paths,
-                            ));
+                            ctx.diagnostics.append(&mut cd);
+                            pieces.extend(union_walk(source, &child_segments, ctx));
                         }
                     }
                 }
             }
             BodySegment::DynamicTag { span, .. } => {
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
-                diagnostics.append(&mut d);
-                pieces.extend(union_walk(
-                    source,
-                    dialect,
-                    &inner_segments,
-                    diagnostics,
-                    property_paths,
-                ));
+                ctx.diagnostics.append(&mut d);
+                pieces.extend(union_walk(source, &inner_segments, ctx));
             }
         }
     }
@@ -436,26 +556,12 @@ fn assemble(pieces: &[Piece]) -> SqlString {
             } => {
                 let base = text.len() as u32;
                 for (off, raw) in sm {
-                    let shifted = base + off;
-                    // A piece's own leading entry can land on the exact
-                    // offset the previous piece's trailing entry already
-                    // used (e.g. the previous piece ends right on a
-                    // placeholder replacement, with no verbatim tail).
-                    // The newer entry describes what actually starts at
-                    // that position, so it wins.
-                    if span_map.last().map(|(last_off, _)| *last_off) == Some(shifted) {
-                        span_map.pop();
-                    }
-                    span_map.push((shifted, *raw));
+                    push_span_entry(&mut span_map, base + off, *raw);
                 }
                 text.push_str(t);
             }
             Piece::Include { raw, span } => {
-                let offset = text.len() as u32;
-                if span_map.last().map(|(last_off, _)| *last_off) == Some(offset) {
-                    span_map.pop();
-                }
-                span_map.push((offset, span.start));
+                push_span_entry(&mut span_map, text.len() as u32, span.start);
                 text.push_str(&format!("/* atlas:include({raw}) */"));
             }
         }
@@ -464,15 +570,212 @@ fn assemble(pieces: &[Piece]) -> SqlString {
     SqlString { text, span_map }
 }
 
-fn read_attr(
-    source: &str,
-    span: ByteSpan,
-    name: &[u8],
-    diagnostics: &mut Vec<Diagnostic>,
-) -> String {
+/// Pushes `(offset, raw)`, replacing rather than duplicating an existing
+/// entry at the same offset — a piece's own leading entry can land on the
+/// exact offset the previous piece's trailing entry already used (e.g. the
+/// previous piece ends right on a placeholder replacement, with no
+/// verbatim tail). The newer entry describes what actually starts at that
+/// position, so it wins, keeping offsets strictly increasing.
+fn push_span_entry(span_map: &mut Vec<(u32, u32)>, offset: u32, raw: u32) {
+    if span_map.last().map(|(last_off, _)| *last_off) == Some(offset) {
+        span_map.pop();
+    }
+    span_map.push((offset, raw));
+}
+
+fn to_piece(sql: SqlString) -> Piece {
+    Piece::Normalized {
+        text: sql.text,
+        span_map: sql.span_map,
+    }
+}
+
+/// Prepends `prefix` (synthetic text — no original bytes, so its span_map
+/// entry points at the wrapper tag's own span start, same convention as
+/// the `<include>` token) to `sql`, first stripping `strip_n` leading bytes
+/// from `sql.text`. Re-bases the remaining span_map entries so offsets
+/// stay correct and strictly increasing.
+fn with_prefix(sql: SqlString, wrapper_start: u32, strip_n: usize, prefix: &str) -> SqlString {
+    let kept = &sql.text[strip_n..];
+    let mut span_map = vec![(0u32, wrapper_start)];
+
+    if !prefix.is_empty() || strip_n > 0 {
+        // Find the raw offset corresponding to position `strip_n` in the
+        // original text: the last span_map entry at or before `strip_n`,
+        // extrapolated by the byte delta (an honest approximation — see
+        // placeholder.rs's span-fidelity note; exact when the run between
+        // entries is verbatim, which it usually is for plain wrapper
+        // boundary text like "AND ").
+        let mut base_off = 0u32;
+        let mut base_raw = sql
+            .span_map
+            .first()
+            .map(|(_, r)| *r)
+            .unwrap_or(wrapper_start);
+        for (off, raw) in &sql.span_map {
+            if (*off as usize) <= strip_n {
+                base_off = *off;
+                base_raw = *raw;
+            } else {
+                break;
+            }
+        }
+        let split_raw = base_raw + (strip_n as u32 - base_off);
+        push_span_entry(&mut span_map, prefix.len() as u32, split_raw);
+    }
+
+    for (off, raw) in &sql.span_map {
+        if (*off as usize) > strip_n {
+            push_span_entry(
+                &mut span_map,
+                prefix.len() as u32 + (off - strip_n as u32),
+                *raw,
+            );
+        }
+    }
+
+    SqlString {
+        text: format!("{prefix}{kept}"),
+        span_map,
+    }
+}
+
+/// Appends `suffix` (synthetic — spans at the wrapper's own start) to
+/// `sql`. The kept (leading) portion of the text is unaffected, so its
+/// existing span_map entries stay valid as-is.
+fn with_suffix(sql: SqlString, wrapper_start: u32, suffix: &str) -> SqlString {
+    let mut span_map = sql.span_map;
+    if !suffix.is_empty() {
+        push_span_entry(&mut span_map, sql.text.len() as u32, wrapper_start);
+    }
+    SqlString {
+        text: format!("{}{suffix}", sql.text),
+        span_map,
+    }
+}
+
+/// Strips `strip_n` trailing bytes from `sql.text`, dropping any span_map
+/// entries that would now point past the end of the (shortened) text.
+fn with_suffix_strip(sql: SqlString, strip_n: usize) -> SqlString {
+    if strip_n == 0 {
+        return sql;
+    }
+    let keep_len = sql.text.len() - strip_n;
+    let text = sql.text[..keep_len].to_string();
+    let span_map = sql
+        .span_map
+        .into_iter()
+        .filter(|(off, _)| (*off as usize) <= keep_len)
+        .collect();
+    SqlString { text, span_map }
+}
+
+/// Length of a leading `\s*(AND|OR)\s+` match (case-insensitive), or 0 if
+/// the text doesn't start with one after skipping leading whitespace.
+fn leading_and_or_strip_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let rest = &text[i..];
+    for word in ["and", "or"] {
+        if rest.len() >= word.len() && rest[..word.len()].eq_ignore_ascii_case(word) {
+            let after = rest.as_bytes().get(word.len());
+            if after.is_some_and(|b| b.is_ascii_whitespace()) {
+                let mut j = i + word.len();
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                return j;
+            }
+        }
+    }
+    0
+}
+
+/// Length to strip from the end for `<set>`'s trailing-comma rule: a comma
+/// immediately before the trailing whitespace run, plus that whitespace.
+fn trailing_comma_strip_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut ws = 0;
+    while ws < bytes.len() && bytes[bytes.len() - 1 - ws].is_ascii_whitespace() {
+        ws += 1;
+    }
+    if bytes.len() > ws && bytes[bytes.len() - 1 - ws] == b',' {
+        ws + 1
+    } else {
+        0
+    }
+}
+
+fn split_overrides(raw: &str) -> Vec<String> {
+    raw.split('|')
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Length of a leading match (after skipping leading whitespace) against
+/// any of `overrides`, case-insensitively — at most one is stripped.
+fn leading_override_strip_len(text: &str, overrides: &[String]) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let rest = &text[i..];
+    for candidate in overrides {
+        if rest.len() >= candidate.len() && rest[..candidate.len()].eq_ignore_ascii_case(candidate)
+        {
+            return i + candidate.len();
+        }
+    }
+    0
+}
+
+/// Length of a trailing match (before trailing whitespace) against any of
+/// `overrides`, case-insensitively — at most one is stripped.
+fn trailing_override_strip_len(text: &str, overrides: &[String]) -> usize {
+    let bytes = text.as_bytes();
+    let mut ws = 0;
+    while ws < bytes.len() && bytes[bytes.len() - 1 - ws].is_ascii_whitespace() {
+        ws += 1;
+    }
+    let before_ws = &text[..text.len() - ws];
+    for candidate in overrides {
+        if before_ws.len() >= candidate.len()
+            && before_ws[before_ws.len() - candidate.len()..].eq_ignore_ascii_case(candidate)
+        {
+            return ws + candidate.len();
+        }
+    }
+    0
+}
+
+/// Reads and lifts an `<include>` marker into
+/// [`FlattenResult::found_includes`]. A missing `refid` is silently
+/// skipped here (see [`FlattenResult::found_includes`]'s doc comment).
+fn record_include(source: &str, span: ByteSpan, ctx: &mut Ctx) {
+    let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
+    let (refid, mut diags) = attr_value_spanned(source, &attrs, b"refid");
+    ctx.diagnostics.append(&mut diags);
+    if let Some(refid) = refid {
+        let target = classify_include(&refid.value, ctx.dialect);
+        ctx.found_includes.push(Spanned {
+            value: IncludeRef {
+                raw: refid.value,
+                target,
+            },
+            span,
+        });
+    }
+}
+
+fn read_attr(source: &str, span: ByteSpan, name: &[u8], ctx: &mut Ctx) -> String {
     let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
     let (value, mut diags) = attr_value_spanned(source, &attrs, name);
-    diagnostics.append(&mut diags);
+    ctx.diagnostics.append(&mut diags);
     value.map(|v| v.value).unwrap_or_default()
 }
 

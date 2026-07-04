@@ -223,17 +223,21 @@ fn build_mapper(
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
 
-                    // MM-05: lift <include> markers found in the body.
+                    // MM-05: lift top-level <include> markers.
                     let (includes, mut include_diags) = lift_includes(source, dialect, &segments);
                     diagnostics.append(&mut include_diags);
-                    statement.includes = includes;
 
                     // MM-06/07: flatten dynamic tags into SqlText and
                     // normalize placeholders per text segment (including
                     // ones nested inside <if>/<choose>/etc.) to populate
-                    // property_paths.
+                    // property_paths. flatten_body also finds <include>
+                    // markers nested inside dynamic tags (invisible to
+                    // lift_includes above, which only sees top-level
+                    // children) — merge_includes dedupes the overlap
+                    // between the two passes by span.
                     let mut flattened = crate::flatten::flatten_body(source, dialect, &segments);
                     diagnostics.append(&mut flattened.diagnostics);
+                    statement.includes = merge_includes(includes, flattened.found_includes);
                     statement.sql = flattened.sql;
                     statement.property_paths = flattened.property_paths;
 
@@ -264,7 +268,6 @@ fn build_mapper(
                         let (includes, mut include_diags) =
                             lift_includes(source, dialect, &segments);
                         diagnostics.append(&mut include_diags);
-                        fragment.includes = includes;
 
                         // MM-06/07: same flattening as statements.
                         // SqlFragment has no property_paths field (fragment
@@ -276,6 +279,7 @@ fn build_mapper(
                         let mut flattened =
                             crate::flatten::flatten_body(source, dialect, &segments);
                         diagnostics.append(&mut flattened.diagnostics);
+                        fragment.includes = merge_includes(includes, flattened.found_includes);
                         fragment.sql = flattened.sql;
 
                         fragments.push(fragment);
@@ -532,13 +536,36 @@ fn lift_includes(
     (includes, diagnostics)
 }
 
+/// MM-06b: merges the top-level `<include>`s `lift_includes` found with the
+/// (possibly overlapping, possibly nested-only) ones `flatten_body`'s
+/// descent found, deduping by span and sorting into document order. A
+/// top-level `<include>` is visited by both passes; a nested one (inside
+/// `<if>`/`<choose>`/etc.) only by the second.
+fn merge_includes(
+    top_level: Vec<Spanned<IncludeRef>>,
+    nested: Vec<Spanned<IncludeRef>>,
+) -> Vec<Spanned<IncludeRef>> {
+    let mut seen: HashSet<(u32, u32)> = top_level
+        .iter()
+        .map(|i| (i.span.start, i.span.end))
+        .collect();
+    let mut merged = top_level;
+    for include in nested {
+        if seen.insert((include.span.start, include.span.end)) {
+            merged.push(include);
+        }
+    }
+    merged.sort_by_key(|i| i.span.start);
+    merged
+}
+
 /// MM-05: classifies a `refid` value. `${}`-driven dynamic refids are
 /// unresolvable regardless of dialect. Otherwise: MyBatis splits on the
 /// *last* dot into `ns.id` (namespaces themselves may contain dots);
 /// iBatis has no cross-namespace include syntax — a dot there is the
 /// normal local-id convention (`WidgetDAO.commonWhere`) and always stays
 /// `Local`. `raw` is preserved either way so consumers can re-derive.
-fn classify_include(raw: &str, dialect: Dialect) -> IncludeTarget {
+pub(crate) fn classify_include(raw: &str, dialect: Dialect) -> IncludeTarget {
     if raw.contains("${") {
         return IncludeTarget::Dynamic;
     }
@@ -1786,11 +1813,12 @@ mod tests {
     }
 
     #[test]
-    fn mm_06_nested_if_inside_transparent_container_still_branches() {
-        // <where> has no special wrapper semantics yet (MM-06b) but must
-        // still be recursed into so the nested <if> branches correctly.
+    fn mm_06_nested_if_inside_unhandled_container_still_branches() {
+        // Tags MM-06b/06c don't yet specialize (e.g. iBatis-style
+        // <dynamic>) are still a transparent passthrough: recursed into so
+        // a nested <if> still branches, contributing no wrapper text.
         let source = r#"<mapper namespace="x">
-            <select id="a">SELECT 1<where><if test="a != null"> AND a = #{a}</if></where></select>
+            <select id="a">SELECT 1<dynamic><if test="a != null"> AND a = #{a}</if></dynamic></select>
         </mapper>"#;
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
@@ -1910,5 +1938,177 @@ mod tests {
         </mapper>"#;
         let result = parse_str(source);
         insta::assert_json_snapshot!(result);
+    }
+
+    #[test]
+    fn mm_06b_where_omitted_when_inner_is_empty() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where><if test="a != null"> AND a = #{a}</if></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
+        assert!(texts.contains("SELECT 1")); // absent branch: no WHERE at all
+        assert!(texts.contains("SELECT 1WHERE a = ?"));
+    }
+
+    #[test]
+    fn mm_06b_where_strips_one_leading_and_case_insensitive() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where> and a = #{a} AND b = #{b}</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE a = ? AND b = ?");
+    }
+
+    #[test]
+    fn mm_06b_where_span_map_integrity_through_strip() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><where> AND a = #{a}</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let v = &vs[0];
+        assert_eq!(v.text.text, "WHERE a = ?");
+        // Strictly increasing (model invariant) and every raw offset is a
+        // valid position within the source.
+        assert!(v.text.span_map.windows(2).all(|w| w[0].0 < w[1].0));
+        for (_, raw) in &v.text.span_map {
+            assert!((*raw as usize) <= source.len());
+        }
+        // The synthetic "WHERE " prefix's entry points at the <where>
+        // tag's own span start (same convention as the include token).
+        assert_eq!(v.text.span_map[0].0, 0);
+    }
+
+    #[test]
+    fn mm_06b_set_prepends_and_strips_trailing_comma() {
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set>name = #{name}, age = #{age},</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "UPDATE t SET name = ?, age = ?");
+    }
+
+    #[test]
+    fn mm_06b_set_omitted_when_inner_is_empty() {
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set><if test="a != null">name = #{name},</if></set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
+        assert!(texts.contains("UPDATE t "));
+        assert!(texts.contains("UPDATE t SET name = ?"));
+    }
+
+    #[test]
+    fn mm_06b_trim_prefix_suffix_and_overrides() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<trim prefix="WHERE (" suffix=")" prefixOverrides="AND |OR " suffixOverrides=",">AND a = #{a},</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE (a = ?)");
+    }
+
+    #[test]
+    fn mm_06b_trim_contributes_nothing_when_inner_empty() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<trim prefix="WHERE "><if test="a != null">a = #{a}</if></trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
+        assert!(texts.contains("SELECT 1"));
+        assert!(texts.contains("SELECT 1WHERE a = ?"));
+    }
+
+    #[test]
+    fn mm_06b_foreach_wraps_once_ignoring_separator_no_branch_factor() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<foreach item="i" collection="list" open="(" close=")" separator=",">#{i}</foreach></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1); // not a branch
+        assert_eq!(vs[0].text.text, "SELECT 1(?)"); // separator not rendered
+    }
+
+    #[test]
+    fn mm_06b_bind_contributes_no_text_but_records_property_path() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><bind name="pattern" value="'%' + name + '%'"/>SELECT 1 WHERE name LIKE #{pattern}</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1 WHERE name LIKE ?");
+        let paths: Vec<_> = mapper.statements[0]
+            .property_paths
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect();
+        assert!(paths.contains(&"'%' + name + '%'"));
+        assert!(paths.contains(&"pattern"));
+    }
+
+    #[test]
+    fn mm_06b_nested_include_is_lifted_into_statement_includes() {
+        // The known limitation flagged in MM-06a is closed here: an
+        // <include> nested inside <if>/<where>/etc. must land in
+        // Statement.includes, not just render correctly in the text.
+        let source = r#"<mapper namespace="x">
+            <sql id="cond">active = 1</sql>
+            <select id="a">SELECT 1<where><if test="a != null"><include refid="cond"/></if></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements[0].includes.len(), 1);
+        assert_eq!(mapper.statements[0].includes[0].value.raw, "cond");
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
+    }
+
+    #[test]
+    fn mm_06b_nested_include_in_fragment_is_lifted_and_not_duplicated_with_top_level() {
+        // A mix of a top-level include (seen by lift_includes) and a
+        // nested one (only seen by flatten's descent) in the same body —
+        // both must appear exactly once after merge_includes dedupes.
+        let source = r#"<mapper namespace="x">
+            <sql id="a">A</sql>
+            <sql id="b">B</sql>
+            <sql id="combined"><include refid="a"/><if test="x"><include refid="b"/></if></sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let combined = mapper
+            .fragments
+            .iter()
+            .find(|f| f.id.value == "combined")
+            .unwrap();
+        let raws: Vec<_> = combined
+            .includes
+            .iter()
+            .map(|i| i.value.raw.as_str())
+            .collect();
+        assert_eq!(raws, vec!["a", "b"]); // document order, no duplicates
     }
 }

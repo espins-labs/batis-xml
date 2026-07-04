@@ -27,7 +27,7 @@ expression: result
           "variants": [
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    \n                     AND active = 1\n                \n            ",
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE active = 1\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -43,22 +43,18 @@ expression: result
                   ],
                   [
                     82,
-                    217
+                    210
                   ],
                   [
-                    103,
-                    285
+                    88,
+                    364
                   ],
                   [
-                    124,
-                    359
-                  ],
-                  [
-                    139,
+                    98,
                     474
                   ],
                   [
-                    156,
+                    115,
                     499
                   ]
                 ]
@@ -69,7 +65,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    \n                     AND active = 0\n                \n            ",
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE active = 0\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -85,22 +81,18 @@ expression: result
                   ],
                   [
                     82,
-                    217
+                    210
                   ],
                   [
-                    103,
-                    285
+                    88,
+                    422
                   ],
                   [
-                    124,
-                    417
-                  ],
-                  [
-                    139,
+                    98,
                     474
                   ],
                   [
-                    156,
+                    115,
                     499
                   ]
                 ]
@@ -109,7 +101,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    AND name = ?\n                     AND active = 1\n                \n            ",
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 1\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -125,26 +117,26 @@ expression: result
                   ],
                   [
                     82,
-                    217
+                    210
                   ],
                   [
-                    103,
-                    262
+                    88,
+                    266
                   ],
                   [
-                    115,
+                    96,
                     285
                   ],
                   [
-                    136,
+                    117,
                     359
                   ],
                   [
-                    151,
+                    132,
                     474
                   ],
                   [
-                    168,
+                    149,
                     499
                   ]
                 ]
@@ -156,7 +148,7 @@ expression: result
             },
             {
               "text": {
-                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                \n                    AND name = ?\n                     AND active = 0\n                \n            ",
+                "text": "\n                SELECT /* atlas:include(baseCols) */ FROM widget\n                WHERE name = ?\n                     AND active = 0\n                \n            ",
                 "span_map": [
                   [
                     0,
@@ -172,26 +164,26 @@ expression: result
                   ],
                   [
                     82,
-                    217
+                    210
                   ],
                   [
-                    103,
-                    262
+                    88,
+                    266
                   ],
                   [
-                    115,
+                    96,
                     285
                   ],
                   [
-                    136,
+                    117,
                     417
                   ],
                   [
-                    151,
+                    132,
                     474
                   ],
                   [
-                    168,
+                    149,
                     499
                   ]
                 ]
