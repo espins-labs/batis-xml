@@ -1,0 +1,3 @@
+# Byte spans are part of this project's contract: never convert line
+# endings on checkout. Fixtures and expected.json are byte-exact pairs.
+* -text
