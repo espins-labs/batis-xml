@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 
 /// Half-open range `[start, end)` in **original bytes** — never in the
 /// decoded string.
+///
+/// Caveat: this holds exactly for UTF-8 input, which decoding leaves
+/// byte-for-byte unchanged. For documents that were re-encoded from
+/// EUC-KR/CP949 (see `encoding.rs`), decoding to UTF-8 changes byte
+/// *widths* per character, so spans on such documents are offsets into the
+/// re-encoded UTF-8 string, not the original raw bytes. Consumers reading
+/// spans back against a source file must decode that source the same way
+/// this crate did before slicing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteSpan {
     pub start: u32,
