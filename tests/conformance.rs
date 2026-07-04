@@ -36,16 +36,18 @@ fn run_dir(dir: &str) {
         checked += 1;
     }
     println!("{dir}: {checked} pairs checked");
+    assert!(
+        checked > 0,
+        "no {dir} conformance pairs found — did the fixtures move?"
+    );
 }
 
 #[test]
-#[ignore = "enabled once the parser lands — expected.json is generated with the implementation"]
 fn conformance_mybatis() {
     run_dir("mybatis");
 }
 
 #[test]
-#[ignore = "enabled once the parser lands"]
 fn conformance_ibatis() {
     run_dir("ibatis");
 }

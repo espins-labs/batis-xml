@@ -1,0 +1,61 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "id": {
+          "value": "selectWidgetById",
+          "span": {
+            "start": 221,
+            "end": 237
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name\n    FROM demo_widget\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    303
+                  ],
+                  [
+                    79,
+                    386
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 383,
+              "end": 385
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}
