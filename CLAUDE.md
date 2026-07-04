@@ -23,6 +23,12 @@ the spec can be kept in sync.
 5. **Spans are original-byte offsets**, never decoded-string offsets.
 6. **English only** in code comments, docs, and commit messages.
 
+## Git safety
+
+Never run destructive git commands (`checkout --`, `restore`,
+`reset --hard`) while uncommitted unique work exists — make a WIP commit
+first (amend/squash later).
+
 ## Gates (run before claiming done)
 
 ```
