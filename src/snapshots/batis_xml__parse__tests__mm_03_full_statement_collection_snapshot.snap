@@ -80,7 +80,15 @@ expression: result
         "param_class": null,
         "result_class": null,
         "result_map_ref": null,
-        "property_paths": []
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 274,
+              "end": 276
+            }
+          }
+        ]
       },
       {
         "kind": "select",

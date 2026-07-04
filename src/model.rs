@@ -63,6 +63,9 @@ pub enum DiagCode {
     /// An entity reference could not be resolved (e.g. `&nbsp;`, common in
     /// legacy mappers). The raw text is kept as-is for that segment (MM-08).
     InvalidEntity,
+    /// A `#{`/`${`/legacy `#..#`/`$..$` placeholder never found its closing
+    /// delimiter within the segment. The raw text is kept as-is (MM-07).
+    UnterminatedPlaceholder,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

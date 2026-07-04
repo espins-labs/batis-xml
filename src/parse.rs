@@ -228,6 +228,18 @@ fn build_mapper(
                     diagnostics.append(&mut include_diags);
                     statement.includes = includes;
 
+                    // MM-07: normalize placeholders in each text segment to
+                    // collect property_paths (from both #{}/${} forms) and
+                    // surface UnterminatedPlaceholder diagnostics. Known
+                    // limitation: text inside a nested dynamic tag (still
+                    // an opaque DynamicTag marker at this point) isn't
+                    // walked here — MM-06 recurses into those spans and
+                    // will need to normalize them too.
+                    let (property_paths, mut placeholder_diags) =
+                        extract_property_paths(&segments, dialect);
+                    diagnostics.append(&mut placeholder_diags);
+                    statement.property_paths = property_paths;
+
                     statements.push(statement);
                     if truncated {
                         break;
@@ -256,6 +268,17 @@ fn build_mapper(
                             lift_includes(source, dialect, &segments);
                         diagnostics.append(&mut include_diags);
                         fragment.includes = includes;
+
+                        // MM-07: SqlFragment has no property_paths field in
+                        // the model (fragment paths are only meaningful
+                        // once inlined into a statement by MM-06), so the
+                        // paths themselves are discarded here — but
+                        // normalizing still surfaces diagnostics (e.g. an
+                        // unterminated placeholder inside a fragment body).
+                        let (_paths, mut placeholder_diags) =
+                            extract_property_paths(&segments, dialect);
+                        diagnostics.append(&mut placeholder_diags);
+
                         fragments.push(fragment);
                     }
                     if truncated {
@@ -510,6 +533,30 @@ fn lift_includes(
     (includes, diagnostics)
 }
 
+/// MM-07: runs [`crate::placeholder::normalize_segment`] over every text
+/// segment in document order, collecting `property_paths` (the normalized
+/// text and span_map are discarded — MM-06 regenerates them when it
+/// assembles the final `SqlText`).
+fn extract_property_paths(
+    segments: &[BodySegment],
+    dialect: Dialect,
+) -> (Vec<Spanned<String>>, Vec<Diagnostic>) {
+    let mut property_paths = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for segment in segments {
+        let BodySegment::Text(text) = segment else {
+            continue;
+        };
+        let mut result =
+            crate::placeholder::normalize_segment(&text.decoded, text.raw_span, dialect);
+        property_paths.append(&mut result.property_paths);
+        diagnostics.append(&mut result.diagnostics);
+    }
+
+    (property_paths, diagnostics)
+}
+
 /// MM-05: classifies a `refid` value. `${}`-driven dynamic refids are
 /// unresolvable regardless of dialect. Otherwise: MyBatis splits on the
 /// *last* dot into `ns.id` (namespaces themselves may contain dots);
@@ -603,11 +650,6 @@ fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnos
 /// came from. Per invariant 4, `raw_span` slices back to the *original*
 /// bytes (entities/CDATA markers unresolved); `decoded` is the resolved
 /// value. The two coincide only when the segment has no entities.
-///
-/// Not yet read outside tests: `capture_body`'s caller discards the
-/// segment list until MM-06 (flattening) and MM-07 (placeholder
-/// normalization) land and assemble `SqlText` from it.
-#[allow(dead_code)]
 struct TextSegment {
     decoded: String,
     raw_span: ByteSpan,
@@ -617,7 +659,6 @@ struct TextSegment {
 /// (`<if>`, `<choose>`, iBatis `<isNotEmpty>`, ...) are recorded as opaque
 /// markers — MM-06 will re-walk their span to flatten branches; MM-08 only
 /// needs to not let them break text-segment ordering or span accounting.
-#[allow(dead_code)]
 enum BodySegment {
     Text(TextSegment),
     DynamicTag { name: String, span: ByteSpan },
@@ -1554,5 +1595,62 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn mm_07_statement_property_paths_populated_mybatis() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT * FROM widget WHERE id = #{id} AND name = ${nameCol}</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let paths: Vec<_> = mapper.statements[0]
+            .property_paths
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect();
+        assert_eq!(paths, vec!["id", "nameCol"]);
+    }
+
+    #[test]
+    fn mm_07_statement_property_paths_populated_ibatis() {
+        let source = r#"<sqlMap>
+            <select id="a">SELECT * FROM widget WHERE id = #id# AND grp = $grpCd$</select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let paths: Vec<_> = mapper.statements[0]
+            .property_paths
+            .iter()
+            .map(|p| p.value.as_str())
+            .collect();
+        assert_eq!(paths, vec!["id", "grpCd"]);
+    }
+
+    #[test]
+    fn mm_07_statement_placeholder_inside_cdata_end_to_end() {
+        let source = "<mapper namespace=\"x\"><select id=\"a\"><![CDATA[SELECT * FROM t WHERE id = #{id}]]></select></mapper>";
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements[0].property_paths.len(), 1);
+        assert_eq!(mapper.statements[0].property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn mm_07_fragment_has_no_property_paths_field_but_diagnostic_surfaces() {
+        // SqlFragment has no property_paths field (fragment paths are only
+        // meaningful once MM-06 inlines the fragment into a statement), but
+        // an unterminated placeholder inside a fragment body must still be
+        // diagnosed rather than silently swallowed.
+        let source = r#"<mapper namespace="x">
+            <sql id="broken">WHERE id = #{id</sql>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.fragments.len(), 1);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::UnterminatedPlaceholder));
     }
 }
