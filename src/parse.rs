@@ -187,7 +187,17 @@ fn build_mapper(
                 });
                 break;
             }
-            Err(_) => break,
+            Err(err) => {
+                diagnostics.push(Diagnostic {
+                    code: DiagCode::UnclosedTag,
+                    span: Some(ByteSpan {
+                        start: child_start as u32,
+                        end: source.len() as u32,
+                    }),
+                    message: format!("XML parse error: {err}"),
+                });
+                break;
+            }
             Ok(Event::Start(tag)) => {
                 let tag_end = reader.buffer_position();
                 let kind = statement_kind(tag.local_name().as_ref());
@@ -214,7 +224,17 @@ fn build_mapper(
                         });
                         break;
                     }
-                    SkipOutcome::Err => break,
+                    SkipOutcome::Err(err) => {
+                        diagnostics.push(Diagnostic {
+                            code: DiagCode::UnclosedTag,
+                            span: Some(ByteSpan {
+                                start: child_start as u32,
+                                end: source.len() as u32,
+                            }),
+                            message: format!("XML parse error while skipping element: {err}"),
+                        });
+                        break;
+                    }
                     SkipOutcome::Closed => {}
                 }
             }
@@ -279,7 +299,10 @@ fn build_statement(
 
     match &id {
         Some(id) => {
-            let key = (id.value.clone(), database_id.map(|d| d.value));
+            let key = (
+                id.value.clone(),
+                database_id.as_ref().map(|d| d.value.clone()),
+            );
             if !seen_ids.insert(key) {
                 diagnostics.push(Diagnostic {
                     code: DiagCode::DuplicateStatementId,
@@ -301,6 +324,7 @@ fn build_statement(
     let statement = Statement {
         kind,
         id,
+        database_id,
         // Placeholder — real SQL text capture lands in MM-08 (CDATA/entities)
         // and MM-06 (dynamic-tag flattening).
         sql: SqlText::Variants(Vec::new()),
@@ -321,7 +345,7 @@ enum SkipOutcome {
     /// closing implicitly closes this element — the caller reports it).
     Eof,
     /// A parse error occurred while skipping.
-    Err,
+    Err(quick_xml::Error),
 }
 
 /// Consumes events until the `End` that matches the `Start` the caller just
@@ -339,7 +363,7 @@ fn skip_subtree(reader: &mut Reader<&[u8]>) -> SkipOutcome {
                 }
             }
             Ok(Event::Eof) => return SkipOutcome::Eof,
-            Err(_) => return SkipOutcome::Err,
+            Err(err) => return SkipOutcome::Err(err),
             _ => {}
         }
     }
@@ -732,6 +756,49 @@ mod tests {
             .map(|s| s.id.as_ref().unwrap().value.clone())
             .collect();
         assert_eq!(ids, vec!["withIf", "afterNesting"]);
+    }
+
+    #[test]
+    fn mm_03_ibatis_embedded_prefix_id_survives_unsplit() {
+        // iBatis no-namespace mode: the "namespace" lives inside the
+        // statement id itself (e.g. `WidgetDAO.getWidget`), not as a
+        // separate attribute — must not be split or reinterpreted.
+        let source = r#"<sqlMap><select id="WidgetDAO.getWidget">SELECT 1</select></sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        let id = mapper.statements[0].id.as_ref().expect("id present");
+        assert_eq!(id.value, "WidgetDAO.getWidget");
+        let ByteSpan { start, end } = id.span;
+        assert_eq!(&source[start as usize..end as usize], id.value);
+    }
+
+    #[test]
+    fn mm_03_reader_error_mid_collection_reports_diagnostic_not_silence() {
+        // The lone `</wrongclose>` doesn't match any open element (mapper
+        // is still open) — quick-xml's check_end_names rejects it, and the
+        // top-level read_event() in build_mapper's loop returns Err
+        // directly (distinct from the SkipOutcome::Err path below).
+        let source =
+            r#"<mapper namespace="x"><select id="ok">SELECT 1</select></wrongclose></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "ok");
+        assert!(!result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn mm_03_reader_error_while_skipping_subtree_reports_diagnostic_not_silence() {
+        // The second statement's own body is malformed (mismatched end
+        // tag), so the error surfaces from skip_subtree rather than the
+        // top-level read_event() — a separate code path from the test
+        // above, exercised here directly.
+        let source = r#"<mapper namespace="x"><select id="ok">SELECT 1</select><insert id="bad">INSERT 1</delete></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert!(!mapper.statements.is_empty());
+        assert!(!result.diagnostics.is_empty());
     }
 
     #[test]

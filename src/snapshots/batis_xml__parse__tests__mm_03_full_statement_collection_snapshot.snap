@@ -22,6 +22,13 @@ expression: result
             "end": 82
           }
         },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 96,
+            "end": 102
+          }
+        },
         "sql": {
           "variants": []
         },
@@ -38,6 +45,13 @@ expression: result
           "span": {
             "start": 156,
             "end": 168
+          }
+        },
+        "database_id": {
+          "value": "mysql",
+          "span": {
+            "start": 182,
+            "end": 187
           }
         },
         "sql": {
@@ -58,6 +72,7 @@ expression: result
             "end": 243
           }
         },
+        "database_id": null,
         "sql": {
           "variants": []
         },
@@ -74,6 +89,13 @@ expression: result
           "span": {
             "start": 312,
             "end": 324
+          }
+        },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 338,
+            "end": 344
           }
         },
         "sql": {

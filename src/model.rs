@@ -80,8 +80,8 @@ pub enum StatementKind {
     Update,
     Delete,
     Procedure,
-    /// iBatis `<statement>` and friends — the original tag name is
-    /// preserved in the diagnostic message.
+    /// iBatis `<statement>` — a generic statement tag with no MyBatis
+    /// CRUD-verb equivalent.
     Generic,
 }
 
@@ -91,6 +91,11 @@ pub struct Statement {
     /// `None` when missing, plus a `MissingStatementId` diagnostic.
     /// Synthesized ids are never invented.
     pub id: Option<Spanned<String>>,
+    /// MyBatis per-vendor branching (`databaseId="oracle"` etc.) — `None`
+    /// when the statement doesn't declare one. Distinguishes otherwise
+    /// duplicate ids (MM-03).
+    #[serde(default)]
+    pub database_id: Option<Spanned<String>>,
     pub sql: SqlText,
     pub includes: Vec<Spanned<IncludeRef>>,
     pub param_class: Option<Spanned<ClassRef>>,
