@@ -60,9 +60,12 @@ node wasm/tests/smoke.js   # smoke test against the built pkg/
   (`batis-xml-wasm`, matching this crate's own crates.io identity -- see
   `release-plz.toml`, excluded from crates.io releases since npm is its
   channel) to the verified-available npm name (`batis-xml`), adds
-  `schema.d.ts`/`LICENSE-MIT`/`LICENSE-APACHE` to its `files` list, and
-  writes an `exports` map (`"."` -> the JS + its `.d.ts`; `"./schema"` ->
-  `schema.d.ts` only, a types-only subpath with no runtime file)
+  `schema.d.ts`/`LICENSE-MIT`/`LICENSE-APACHE`/`THIRD_PARTY_NOTICES`
+  (the compiled binary statically links `encoding_rs`, which embeds
+  WHATWG-owned encoding data under its own BSD-3-Clause license) to its
+  `files` list, and writes an `exports` map (`"."` -> the JS + its
+  `.d.ts`; `"./schema"` -> `schema.d.ts` only, a types-only subpath with
+  no runtime file)
 
 This produces `wasm/pkg/` (gitignored -- rebuilt on demand, not committed)
 ready for `npm pack`; this repo does not automate or run `npm publish`.

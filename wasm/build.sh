@@ -12,6 +12,12 @@ wasm-pack build wasm --target nodejs
 
 cp wasm/schema.d.ts wasm/pkg/schema.d.ts
 cp LICENSE-MIT LICENSE-APACHE wasm/pkg/
+# B33 (cold code review): the compiled wasm binary statically links
+# encoding_rs, which embeds WHATWG-owned encoding data under a separate
+# BSD-3-Clause license (on top of encoding_rs's own Apache-2.0/MIT) --
+# reproduce that notice in the shipped package, same as the LICENSE-*
+# files above.
+cp wasm/THIRD_PARTY_NOTICES wasm/pkg/THIRD_PARTY_NOTICES
 
 node - <<'NODE'
 const fs = require("fs");
@@ -19,7 +25,7 @@ const fs = require("fs");
 const pkgPath = "wasm/pkg/package.json";
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 pkg.name = "batis-xml";
-for (const f of ["schema.d.ts", "LICENSE-MIT", "LICENSE-APACHE"]) {
+for (const f of ["schema.d.ts", "LICENSE-MIT", "LICENSE-APACHE", "THIRD_PARTY_NOTICES"]) {
   if (!pkg.files.includes(f)) {
     pkg.files.push(f);
   }
