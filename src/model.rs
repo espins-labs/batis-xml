@@ -91,6 +91,20 @@ pub enum DiagCode {
     UnclosedTag,
     DuplicateStatementId,
     MissingStatementId,
+    /// A **file-local heuristic**: this crate parses one mapper file at a
+    /// time and has no view of any other file's `<sql>` fragments, so this
+    /// is only emitted for MyBatis (`Dialect::Mybatis`), whose namespaces
+    /// are per-file and whose refids are typically resolved within them.
+    /// Never emitted for iBatis (B22, cold code review) -- iBatis fragments
+    /// are a global cross-file registry by design (any sqlMap can reference
+    /// any other sqlMap's `<sql>` by short name), so this heuristic would
+    /// flag nearly every legitimate cross-file reference as dangling.
+    /// Consumers that resolve `<include>` across an entire project (rather
+    /// than one file) should treat a *missing* `DanglingRefid` as "not
+    /// checked here", not "resolved" -- upstream MyBatis also supports
+    /// cross-namespace short-name resolution that this single-file view
+    /// can't see either, so even the MyBatis case is a heuristic, not a
+    /// guarantee.
     DanglingRefid,
     BranchLimitExceeded,
     UnknownElement,

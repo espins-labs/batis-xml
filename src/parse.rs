@@ -517,11 +517,23 @@ fn build_mapper(
     // Qualified (cross-file) and Dynamic (unresolvable) are the consumer's
     // job. Done after the full walk so forward references (a statement
     // above the <sql> it includes) resolve correctly.
-    for statement in &statements {
-        check_dangling_local_refids(&statement.includes, &seen_fragment_ids, &mut diagnostics);
-    }
-    for fragment in &fragments {
-        check_dangling_local_refids(&fragment.includes, &seen_fragment_ids, &mut diagnostics);
+    //
+    // B22 (cold code review): MyBatis-only. This is a file-local heuristic
+    // -- it only ever sees the one mapper file being parsed, so it can't
+    // know about `<sql>` fragments defined elsewhere. MyBatis namespaces
+    // are per-file and refids are typically local, so a miss is usually a
+    // real typo. iBatis fragments are a global cross-file registry by
+    // design (any sqlMap can reference any other sqlMap's `<sql>` by short
+    // name), so this same heuristic would flag nearly every legitimate
+    // cross-file reference as dangling -- almost pure noise. See
+    // `DiagCode::DanglingRefid`'s doc comment and README.
+    if dialect == Dialect::Mybatis {
+        for statement in &statements {
+            check_dangling_local_refids(&statement.includes, &seen_fragment_ids, &mut diagnostics);
+        }
+        for fragment in &fragments {
+            check_dangling_local_refids(&fragment.includes, &seen_fragment_ids, &mut diagnostics);
+        }
     }
 
     // NOTE: "unused fragment" detection (spec edge case) needs
@@ -2268,6 +2280,26 @@ mod tests {
             .filter(|d| d.code == DiagCode::DanglingRefid)
             .collect();
         assert_eq!(dangling.len(), 1);
+    }
+
+    #[test]
+    fn b22_dangling_refid_is_suppressed_entirely_for_ibatis() {
+        // Cold code review B22: iBatis <sql> fragments are a global
+        // cross-file registry by design (any sqlMap can reference any
+        // other sqlMap's fragment by short name) -- this crate only ever
+        // sees one file, so the intra-file dangling check is ~all noise
+        // for iBatis and must not fire at all, unlike MyBatis (see the
+        // test above) where it stays on.
+        let source = r#"<sqlMap>
+            <select id="WidgetDAO.a">SELECT <include refid="doesNotExistElsewhere"/></select>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements[0].includes.len(), 1);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DanglingRefid));
     }
 
     #[test]

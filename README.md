@@ -70,6 +70,15 @@ needs the extra handling above without re-deriving it from the XML by
 hand. See `IncludeTarget`'s rustdoc for the same contract from the type's
 point of view, and `wasm/README.md` for the npm-consumer framing.
 
+`DiagCode::DanglingRefid` (a local `refid` with no matching `<sql>` in the
+same file) is only ever emitted for **MyBatis** — it's a file-local
+heuristic that has no view of any other mapper file, and iBatis fragments
+are a global cross-file registry by design, so applying the same check
+there would flag nearly every legitimate cross-file reference as
+dangling. Even for MyBatis, a *missing* `DanglingRefid` isn't a guarantee
+of resolvability: upstream MyBatis also supports cross-namespace
+short-name resolution this single-file view can't see.
+
 ## Status
 
 MM-01 through MM-14 are complete: parsing, dynamic-SQL flattening,
