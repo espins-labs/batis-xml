@@ -35,7 +35,24 @@ pub(crate) const OVERSIZE_LIMIT: usize = 10 * 1024 * 1024;
 
 /// MM-01: identifies the root element and derives the dialect from its
 /// name (`<mapper>` → MyBatis, `<sqlMap>` → iBatis).
+///
+/// A19 (cold code review): a leading U+FEFF (byte-order mark left in an
+/// already-decoded string -- e.g. a caller that read a UTF-8 file without
+/// stripping its BOM before calling `parse`) is stripped *here*, before
+/// the string is used for anything. Two independent things go wrong if
+/// it isn't: quick-xml's `Reader::from_str` silently skips a leading BOM
+/// itself and reports `buffer_position()` relative to the *post-BOM*
+/// content, while every span this function computes indexes the original
+/// (still-BOM-prefixed) string -- a 3-byte skew that corrupts every
+/// slice taken through `source[span.start..span.end]` for the rest of
+/// the document. Stripping it ourselves first means quick-xml's
+/// positions and this function's indexing agree, and it makes this
+/// entry point's span semantics match `parse_bytes`' documented contract
+/// (`ParseResult::encoding`'s doc comment): every span is relative to
+/// the BOM-stripped content, never the original (possibly BOM-prefixed)
+/// input.
 pub(crate) fn parse_str(source: &str) -> ParseResult {
+    let source = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     if source.len() > OVERSIZE_LIMIT {
         return ParseResult {
             dialect: Dialect::Unknown,
@@ -1768,10 +1785,41 @@ mod tests {
 
     #[test]
     fn mm_01_bom_before_root_is_skipped() {
-        let source = "\u{FEFF}<mapper namespace=\"x\"></mapper>";
-        let result = parse_str(source);
+        // A19 (cold code review): strengthened beyond dialect/mapper
+        // presence to also assert id, text, and span slices -- a BOM/
+        // reader-position skew corrupted exactly these (garbled text, a
+        // lost statement id) without ever flipping `dialect` or
+        // `mapper.is_some()`, so those two alone didn't catch it.
+        let with_bom =
+            "\u{FEFF}<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        let without_bom = "<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        let result = parse_str(with_bom);
         assert_eq!(result.dialect, Dialect::Mybatis);
-        assert!(result.mapper.is_some());
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.namespace.as_ref().unwrap().value, "x");
+        assert_eq!(mapper.statements.len(), 1);
+        let stmt = &mapper.statements[0];
+        assert_eq!(stmt.id.as_ref().unwrap().value, "a");
+        let SqlText::Variants(variants) = &stmt.sql else {
+            panic!("expected a single unconditional variant")
+        };
+        assert_eq!(variants[0].text.text, "SELECT 1");
+
+        // Spans must match a parse of the same document *without* a BOM,
+        // byte-for-byte -- i.e. every offset is relative to the
+        // BOM-stripped content, never the original BOM-prefixed input
+        // (see parse_str's doc comment and `ParseResult::encoding`'s).
+        let without_bom_result = parse_str(without_bom);
+        let expected_mapper = without_bom_result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.namespace.as_ref().unwrap().span,
+            expected_mapper.namespace.as_ref().unwrap().span
+        );
+        assert_eq!(stmt.span, expected_mapper.statements[0].span);
+        assert_eq!(
+            stmt.id.as_ref().unwrap().span,
+            expected_mapper.statements[0].id.as_ref().unwrap().span
+        );
     }
 
     #[test]

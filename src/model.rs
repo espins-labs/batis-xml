@@ -28,6 +28,14 @@ use serde::{Deserialize, Serialize};
 /// every re-encoded document, not just Korean legacy files. Consumers
 /// reading spans back against a source file must decode that source the
 /// same way this crate did before slicing.
+///
+/// A leading byte-order mark is never part of this text either way: a
+/// BOM is consumed during decoding for [`crate::parse_bytes`] (see
+/// [`ParseResult::encoding`]'s doc comment) and stripped from the input
+/// string itself for [`crate::parse`] (a caller can hand it an
+/// already-decoded string that still carries a BOM, e.g. read from a
+/// file without stripping it first) -- both entry points agree that
+/// every span is relative to the BOM-stripped content.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteSpan {
