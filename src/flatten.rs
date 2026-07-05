@@ -123,6 +123,15 @@ struct Ctx {
     /// Current recursion depth (nesting levels of dynamic tags descended
     /// so far in this pass) -- see [`DEPTH_LIMIT`].
     depth: u32,
+    /// B38 (cold code review, minor): set while descending into an
+    /// already-flagged unknown element's transparently-folded content, so
+    /// its descendants don't each emit their own `UnknownElement` too --
+    /// one typo'd wrapper (e.g. a misplaced `<resultMap>` nested inside a
+    /// statement) shouldn't cascade into N extra diagnostics for every one
+    /// of its own children (`<id>`, `<result>`, ...). Restored to its prior
+    /// value after each such recursive call returns, so it never leaks
+    /// into unrelated siblings.
+    inside_unknown_element: bool,
 }
 
 /// The diagnostic emitted once a recursive descent hits [`DEPTH_LIMIT`].
@@ -154,6 +163,7 @@ pub(crate) fn flatten_body(
         property_paths: Vec::new(),
         found_includes: Vec::new(),
         depth: 0,
+        inside_unknown_element: false,
     };
 
     match flatten_segments(source, segments, &mut attempt) {
@@ -183,6 +193,7 @@ pub(crate) fn flatten_body(
                 property_paths: Vec::new(),
                 found_includes: Vec::new(),
                 depth: 0,
+                inside_unknown_element: false,
             };
             let pieces = union_walk(source, segments, &mut ctx);
             let text = assemble(&pieces);
@@ -371,7 +382,21 @@ fn flatten_segments_inner(
                     // content in transparently, so a typo'd wrapper
                     // doesn't also lose its body text) is deliberate and
                     // kept; only the silence is fixed.
-                    if !crate::parse::is_known_ignorable_element(name) {
+                    //
+                    // B38 (cold code review, minor): a genuinely unknown
+                    // element's content is still walked by this same
+                    // recursive descent (that's the "folded in
+                    // transparently" part), so its own children hit this
+                    // same catch-all too -- e.g. a misplaced <resultMap>
+                    // nested inside a statement flagged itself AND its
+                    // <id>/<result> children, one authoring mistake
+                    // producing N+1 diagnostics. Only the outermost unknown
+                    // element in a chain is flagged; ctx.inside_unknown_element
+                    // suppresses the rest and is restored after this
+                    // element's own subtree is done, so it never leaks
+                    // into an unrelated sibling elsewhere in the tree.
+                    let is_unknown = !crate::parse::is_known_ignorable_element(name);
+                    if is_unknown && !ctx.inside_unknown_element {
                         ctx.diagnostics.push(Diagnostic {
                             code: DiagCode::UnknownElement,
                             span: Some(*span),
@@ -383,7 +408,12 @@ fn flatten_segments_inner(
                             ),
                         });
                     }
+                    let was_inside_unknown = ctx.inside_unknown_element;
+                    if is_unknown {
+                        ctx.inside_unknown_element = true;
+                    }
                     let local = expand_transparent(source, *span, ctx)?;
+                    ctx.inside_unknown_element = was_inside_unknown;
                     acc = try_combine(&acc, &local)?;
                 }
             },

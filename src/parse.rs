@@ -4811,6 +4811,56 @@ mod tests {
         assert!(unknown[0].message.contains("iff"));
     }
 
+    #[test]
+    fn b38_unknown_element_s_descendants_do_not_each_get_their_own_diagnostic() {
+        // Cold code review B38 (minor): an unknown element's content is
+        // still walked by the same recursive descent that flagged it
+        // (that's the deliberate transparent-fold recovery), so its own
+        // children hit the same catch-all too -- a <resultMap> misplaced
+        // inside a statement used to flag itself AND its <id>/<result>
+        // children, one authoring mistake producing three diagnostics.
+        // Only the outermost unknown element should be flagged.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1
+                <resultMap id="rm" type="Widget">
+                    <id column="id" property="id"/>
+                    <result column="name" property="name"/>
+                </resultMap>
+            </select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(
+            unknown.len(),
+            1,
+            "only the outermost unknown element should be flagged, got {unknown:?}"
+        );
+        assert!(unknown[0].message.contains("resultMap"));
+    }
+
+    #[test]
+    fn b38_sibling_unknown_elements_are_each_flagged_independently() {
+        // The suppression must be scoped to one unknown element's own
+        // subtree -- it must not leak into a later, unrelated sibling.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1
+                <bogusOne>a</bogusOne>
+                <bogusTwo>b</bogusTwo>
+            </select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(unknown.len(), 2, "each sibling gets its own: {unknown:?}");
+    }
+
     // --- span field (Statement/SqlFragment/ResultMap): opening-tag start
     // -> subtree end. Promoted from the CodeGraph swap experiment (friction
     // #3); no MM number was assigned in the spec, so these aren't mm_-
