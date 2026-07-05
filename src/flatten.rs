@@ -1139,13 +1139,6 @@ fn with_prefix(
     // own length -- a phantom one-past-end entry describing a segment
     // that has zero surviving characters after it, same class as B9/B20.
     // `<`, not `<=`, matches with_suffix_strip's own filter.
-    // B26 (cold code review): when the strip empties the body entirely
-    // (e.g. `<where>AND </where>` -- the leading-AND/OR strip consumes
-    // the *whole* text, so `kept` is ""), the split-point entry pushed
-    // above at offset == prefix.len() sits exactly at the final text's
-    // own length -- a phantom one-past-end entry describing a segment
-    // that has zero surviving characters after it, same class as B9/B20.
-    // `<`, not `<=`, matches with_suffix_strip's own filter.
     let text = format!("{prefix}{kept}");
     let final_len = text.len() as u32;
     span_map.retain(|(off, _)| *off < final_len);
