@@ -178,6 +178,7 @@
     "fragments": [],
     "result_maps": []
   },
+  "encoding": "UTF-8",
   "diagnostics": [
     {
       "code": "branch_limit_exceeded",

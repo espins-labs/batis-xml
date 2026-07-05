@@ -27,9 +27,12 @@ pub fn parse(source: &str) -> ParseResult {
     parse::parse_str(source)
 }
 
-/// Detects the encoding (UTF-8 / EUC-KR / CP949), decodes, then parses.
-/// No `Err`: even encoding failures are absorbed as `mapper: None` plus
-/// [`DiagCode::EncodingUndetectable`].
+/// Detects the encoding via a BOM/declared-label-driven chain covering
+/// every WHATWG encoding (not just UTF-8/EUC-KR/CP949 -- see `encoding.rs`
+/// for the full chain), decodes, then parses. No `Err`: even encoding
+/// failures are absorbed as `mapper: None` plus
+/// [`DiagCode::EncodingUndetectable`]. [`ParseResult::encoding`] reports
+/// which decoder was actually used.
 pub fn parse_bytes(bytes: &[u8]) -> ParseResult {
     // Pre-decode byte cap (cold review B5): checking only post-decode (as
     // parse_str still does, defense-in-depth) means a huge input (e.g.
@@ -37,8 +40,14 @@ pub fn parse_bytes(bytes: &[u8]) -> ParseResult {
     if bytes.len() > MAX_INPUT_BYTES {
         return oversize_result(bytes.len());
     }
-    let (source, mut diags) = encoding::decode(bytes);
+    let (source, mut diags, encoding) = encoding::decode(bytes);
     let mut result = parse::parse_str(&source);
+    // A15 (cold code review, major model addition): parse_str always sets
+    // this to "UTF-8" (correct for its own &str input, which is always
+    // already-decoded UTF-8), but the *original* bytes may have been
+    // decoded from something else entirely -- override with what the
+    // detection chain actually used.
+    result.encoding = Some(encoding.to_string());
     diags.append(&mut result.diagnostics);
     result.diagnostics = diags;
     result
@@ -57,7 +66,7 @@ pub fn detect_dialect(bytes: &[u8]) -> Dialect {
     if bytes.len() > MAX_INPUT_BYTES {
         return Dialect::Unknown;
     }
-    let (source, _diags) = encoding::decode(bytes);
+    let (source, _diags, _encoding) = encoding::decode(bytes);
     parse::detect_dialect_str(&source)
 }
 
@@ -65,6 +74,11 @@ fn oversize_result(byte_len: usize) -> ParseResult {
     ParseResult {
         dialect: Dialect::Unknown,
         mapper: None,
+        // No decode was attempted at all -- the raw-byte cap rejected the
+        // input before encoding.rs ever ran, so there's genuinely no
+        // encoding to report (unlike every other ParseResult, which always
+        // has one: see ParseResult::encoding's doc comment).
+        encoding: None,
         diagnostics: vec![Diagnostic {
             code: DiagCode::OversizeInput,
             span: None,
@@ -114,5 +128,67 @@ mod tests {
         let result = parse_bytes(source);
         assert_eq!(result.dialect, Dialect::Mybatis);
         assert!(result.diagnostics.is_empty());
+    }
+
+    // A15 (cold code review, major model addition): ParseResult.encoding
+    // reports the WHATWG name of the decoder the detection chain actually
+    // used, so a consumer can reproduce this crate's byte offsets by
+    // decoding the *original* bytes the same way.
+
+    #[test]
+    fn a15_encoding_reports_utf8_for_plain_utf8_input() {
+        let source = br#"<mapper namespace="x"><select id="a">SELECT 1</select></mapper>"#;
+        let result = parse_bytes(source);
+        assert_eq!(result.encoding.as_deref(), Some("UTF-8"));
+    }
+
+    #[test]
+    fn a15_encoding_reports_euc_kr_for_euc_kr_input() {
+        let (euckr_bytes, _, had_errors) = encoding_rs::EUC_KR.encode("그룹");
+        assert!(!had_errors);
+        let mut bytes = b"<?xml version=\"1.0\" encoding=\"EUC-KR\"?><mapper namespace=\"".to_vec();
+        bytes.extend_from_slice(&euckr_bytes);
+        bytes.extend_from_slice(b"\"></mapper>");
+
+        let result = parse_bytes(&bytes);
+        assert_eq!(result.encoding.as_deref(), Some("EUC-KR"));
+    }
+
+    #[test]
+    fn a15_encoding_is_none_when_the_oversize_cap_rejects_before_any_decode() {
+        // No decode was attempted at all -- unlike every other case, there
+        // is genuinely no encoding to report here.
+        let huge = vec![b'x'; MAX_INPUT_BYTES + 1];
+        let result = parse_bytes(&huge);
+        assert_eq!(result.encoding, None);
+    }
+
+    #[test]
+    fn a15_encoding_is_utf8_for_the_str_based_parse_entry_point() {
+        // parse() takes an already-decoded &str -- by Rust's own type
+        // guarantee that's always UTF-8, regardless of what the original
+        // bytes (if any) were encoded as before some other layer decoded
+        // them into this &str.
+        let result = parse(r#"<mapper namespace="x"></mapper>"#);
+        assert_eq!(result.encoding.as_deref(), Some("UTF-8"));
+    }
+
+    #[test]
+    fn a15_encoding_reports_utf16le_and_spans_are_relative_to_bom_stripped_content() {
+        // BOM handling, explicit: a UTF-16LE document with a BOM decodes
+        // with the BOM consumed (never appears in the decoded text), so
+        // every span -- including the namespace attribute's -- is an
+        // offset counted from right after the (now-vanished) BOM, not
+        // from the start of the original file's raw bytes.
+        let body = r#"<mapper namespace="x"></mapper>"#;
+        let mut bytes: Vec<u8> = vec![0xFF, 0xFE]; // UTF-16LE BOM
+        for unit in body.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let result = parse_bytes(&bytes);
+        assert_eq!(result.encoding.as_deref(), Some("UTF-16LE"));
+        let mapper = result.mapper.expect("mapper root");
+        let ns = mapper.namespace.expect("namespace");
+        assert_eq!(&body[ns.span.start as usize..ns.span.end as usize], "x");
     }
 }

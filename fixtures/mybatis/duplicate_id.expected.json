@@ -125,6 +125,7 @@
     "fragments": [],
     "result_maps": []
   },
+  "encoding": "UTF-8",
   "diagnostics": [
     {
       "code": "duplicate_statement_id",

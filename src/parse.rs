@@ -40,6 +40,12 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
         return ParseResult {
             dialect: Dialect::Unknown,
             mapper: None,
+            // A15 (cold code review): parse_str's input is always an
+            // already-decoded &str, so it's always UTF-8 by Rust's own
+            // type guarantee -- regardless of which branch returns here.
+            // parse_bytes overrides this with the actual encoding the
+            // detection chain used before source ever became a &str.
+            encoding: Some("UTF-8".to_string()),
             diagnostics: vec![Diagnostic {
                 code: DiagCode::OversizeInput,
                 span: None,
@@ -79,6 +85,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         ParseResult {
                             dialect,
                             mapper: Some(mapper),
+                            encoding: Some("UTF-8".to_string()),
                             diagnostics,
                         }
                     }
@@ -97,6 +104,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         ParseResult {
                             dialect: Dialect::Unknown,
                             mapper: None,
+                            encoding: Some("UTF-8".to_string()),
                             diagnostics,
                         }
                     }
@@ -114,6 +122,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         ParseResult {
                             dialect: Dialect::Mybatis,
                             mapper: Some(mapper),
+                            encoding: Some("UTF-8".to_string()),
                             diagnostics,
                         }
                     }
@@ -124,6 +133,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         ParseResult {
                             dialect: Dialect::Ibatis,
                             mapper: Some(mapper),
+                            encoding: Some("UTF-8".to_string()),
                             diagnostics,
                         }
                     }
@@ -142,6 +152,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         ParseResult {
                             dialect: Dialect::Unknown,
                             mapper: None,
+                            encoding: Some("UTF-8".to_string()),
                             diagnostics,
                         }
                     }
@@ -156,6 +167,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 return ParseResult {
                     dialect: Dialect::Unknown,
                     mapper: None,
+                    encoding: Some("UTF-8".to_string()),
                     diagnostics,
                 };
             }
@@ -178,6 +190,7 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                     return ParseResult {
                         dialect: Dialect::Unknown,
                         mapper: None,
+                        encoding: Some("UTF-8".to_string()),
                         diagnostics,
                     };
                 }

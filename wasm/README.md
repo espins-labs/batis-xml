@@ -27,31 +27,47 @@ add later, not a difference in the Rust source.
 **(a) Feed raw bytes — never a host-pre-decoded string.** Always pass the
 file's original `Buffer`/`Uint8Array` to `parse`/`detect`, not a string
 you already decoded (e.g. `fs.readFileSync(path, "utf-8")` then
-re-encoded). `batis-xml` detects the encoding itself: UTF-8 first, then
-BOM/declared-label-driven (all WHATWG encodings via `encoding_rs` —
-Shift_JIS, GB18030, Big5, UTF-16, …), with an EUC-KR heuristic for
-declaration-less legacy files; anything else decodes lossily with a
-diagnostic. Feeding it bytes that already went through a host UTF-8
-decoder defeats all of that, since a genuinely non-UTF-8 file would
+re-encoded). `batis-xml` detects the encoding itself: a BOM sniff first
+(UTF-16 LE/BE select directly; a UTF-8 BOM is stripped), then a UTF-8
+attempt, then the XML declaration's own `encoding=` label
+(BOM/declared-label-driven, covering every WHATWG encoding via
+`encoding_rs` — Shift_JIS, GB18030, Big5, UTF-16, …), then an EUC-KR
+heuristic for declaration-less legacy files; anything else decodes
+lossily with a diagnostic. `result.encoding` reports which of these
+actually won (see (b)). Feeding it bytes that already went through a host
+UTF-8 decoder defeats all of that, since a genuinely non-UTF-8 file would
 already have been mangled (replacement characters) before `batis-xml`
 ever sees it. Read files as bytes and stay in bytes until you call in.
 
-**(b) Spans are UTF-8 byte offsets — not JS string indices.** Every
-`ByteSpan { start, end }` in the JSON indexes into UTF-8 *bytes* of the
-source (see `ByteSpan`'s own doc in `schema.d.ts` for the EUC-KR
-re-encoding caveat), while a JS string is indexed by UTF-16 code units.
-These silently diverge the moment a multi-byte character appears before
-the offset you care about. To slice correctly:
+**(b) Spans are byte offsets into the UTF-8 text `batis-xml` itself
+decoded — never JS string indices, and never the *original* file's raw
+bytes for anything but a UTF-8 source.** Every `ByteSpan { start, end }`
+in the JSON indexes into the UTF-8 bytes of the *decoded* text (see
+`ByteSpan`'s own doc in `schema.d.ts`), while a JS string is indexed by
+UTF-16 code units — these diverge the moment a multi-byte character
+appears before the offset you care about. Worse, for anything decoded
+from a non-UTF-8 encoding, the original file's raw bytes aren't even the
+same *length* as the UTF-8 re-encoding the spans are offsets into — do
+not slice the original `Buffer`/`Uint8Array` directly with these offsets.
+`result.encoding` (the WHATWG name `TextDecoder` accepts directly) is
+what makes this reproducible:
 
 ```js
 // bytes is the same Buffer/Uint8Array you fed to parse()
-const text = Buffer.from(bytes).subarray(span.start, span.end).toString("utf-8");
+const decodedText = new TextDecoder(result.encoding).decode(bytes);
+const utf8Bytes = new TextEncoder().encode(decodedText); // byte-identical to batis-xml's own internal String
+const text = new TextDecoder("utf-8").decode(
+  utf8Bytes.subarray(span.start, span.end)
+);
 ```
 
-If you only have a JS string (already decoded), re-encode it to UTF-8
-bytes first (`Buffer.from(str, "utf-8")`) before slicing by these
-offsets — don't use the string's own `.slice()`/`.substring()` with span
-offsets.
+If the input was plain UTF-8, `bytes` and `utf8Bytes` are already
+byte-identical (decoding then re-encoding UTF-8 is a no-op), so slicing
+`bytes` directly happens to work in that one case — but relying on that
+silently breaks the moment a file turns out to be Shift_JIS/EUC-KR/
+UTF-16/etc., which is exactly the failure mode `result.encoding` exists
+to prevent. Always go through the `TextDecoder`/`TextEncoder` round trip
+above regardless of what encoding you expect.
 
 **(c) Build qualified names as `ns.id`, suffixed `@databaseId` when
 present.** `Statement.database_id` is deliberately *not* folded into

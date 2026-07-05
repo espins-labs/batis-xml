@@ -97,6 +97,7 @@
     "fragments": [],
     "result_maps": []
   },
+  "encoding": "UTF-8",
   "diagnostics": [
     {
       "code": "invalid_entity",

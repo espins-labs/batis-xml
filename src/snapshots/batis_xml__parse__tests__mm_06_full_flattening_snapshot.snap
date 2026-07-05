@@ -1,5 +1,6 @@
 ---
 source: src/parse.rs
+assertion_line: 2986
 expression: result
 ---
 {
@@ -260,5 +261,6 @@ expression: result
     ],
     "result_maps": []
   },
+  "encoding": "UTF-8",
   "diagnostics": []
 }

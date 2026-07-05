@@ -48,19 +48,37 @@ const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 const UTF16LE_BOM: &[u8] = &[0xFF, 0xFE];
 const UTF16BE_BOM: &[u8] = &[0xFE, 0xFF];
 
-pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>) {
+/// `encoding` is the WHATWG name of the decoder actually used
+/// ([`encoding_rs::Encoding::name`]'s own value, e.g. `"UTF-8"`,
+/// `"EUC-KR"`, `"UTF-16LE"`) -- surfaced publicly as
+/// `ParseResult::encoding` (A15, cold code review) so a consumer working
+/// with the original input bytes knows which decoder to reproduce this
+/// crate's byte offsets with. The lossy fallback (step ⑤) reports
+/// `"UTF-8"`: the output is `String::from_utf8_lossy`'s result, and a
+/// WHATWG `TextDecoder("utf-8")` (non-fatal mode, the default) applies
+/// the same U+FFFD replacement for invalid sequences, so it reproduces
+/// this exact output on the original bytes.
+pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>, &'static str) {
     // ① BOM sniff. UTF-16 LE/BE BOMs are checked first (2-byte prefixes,
     // and a UTF-16 document's declaration can't be read as ASCII anyway,
     // so there's nothing else to check against here).
     if let Some(rest) = bytes.strip_prefix(UTF16LE_BOM) {
         let (decoded, _, had_errors) = encoding_rs::UTF_16LE.decode(rest);
         if !had_errors {
-            return (decoded.into_owned(), Vec::new());
+            return (
+                decoded.into_owned(),
+                Vec::new(),
+                encoding_rs::UTF_16LE.name(),
+            );
         }
     } else if let Some(rest) = bytes.strip_prefix(UTF16BE_BOM) {
         let (decoded, _, had_errors) = encoding_rs::UTF_16BE.decode(rest);
         if !had_errors {
-            return (decoded.into_owned(), Vec::new());
+            return (
+                decoded.into_owned(),
+                Vec::new(),
+                encoding_rs::UTF_16BE.name(),
+            );
         }
     }
 
@@ -76,7 +94,7 @@ pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>) {
         let diagnostics = declared_mismatch_diagnostic(declared.as_deref(), encoding_rs::UTF_8)
             .into_iter()
             .collect();
-        return (s.to_string(), diagnostics);
+        return (s.to_string(), diagnostics, encoding_rs::UTF_8.name());
     }
 
     // ③ Declared label, trust-but-verify.
@@ -87,7 +105,7 @@ pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>) {
                 let diagnostics = declared_mismatch_diagnostic(declared.as_deref(), enc)
                     .into_iter()
                     .collect();
-                return (decoded.into_owned(), diagnostics);
+                return (decoded.into_owned(), diagnostics, enc.name());
             }
         }
     }
@@ -98,7 +116,11 @@ pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>) {
         let diagnostics = declared_mismatch_diagnostic(declared.as_deref(), encoding_rs::EUC_KR)
             .into_iter()
             .collect();
-        return (decoded.into_owned(), diagnostics);
+        return (
+            decoded.into_owned(),
+            diagnostics,
+            encoding_rs::EUC_KR.name(),
+        );
     }
 
     // ⑤ Lossy + EncodingUndetectable.
@@ -111,6 +133,7 @@ pub(crate) fn decode(bytes: &[u8]) -> (String, Vec<Diagnostic>) {
                 "could not confidently detect an encoding (tried UTF-8, the declared label, EUC-KR/CP949 heuristic); decoded lossily"
                     .to_string(),
         }],
+        encoding_rs::UTF_8.name(),
     )
 }
 
@@ -207,7 +230,7 @@ mod tests {
     #[test]
     fn mm_14_valid_utf8_no_declaration_decodes_cleanly() {
         let bytes = "<mapper namespace=\"x\"></mapper>".as_bytes();
-        let (source, diagnostics) = decode(bytes);
+        let (source, diagnostics, _encoding) = decode(bytes);
         assert_eq!(source, "<mapper namespace=\"x\"></mapper>");
         assert!(diagnostics.is_empty());
     }
@@ -216,7 +239,7 @@ mod tests {
     fn mm_14_utf8_declared_and_actual_agree() {
         let bytes =
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><mapper namespace=\"x\"/>".as_bytes();
-        let (_, diagnostics) = decode(bytes);
+        let (_, diagnostics, _encoding) = decode(bytes);
         assert!(diagnostics.is_empty());
     }
 
@@ -229,7 +252,7 @@ mod tests {
         bytes.extend_from_slice(&euckr_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.contains("그룹"));
         assert!(diagnostics.is_empty());
     }
@@ -241,7 +264,7 @@ mod tests {
         bytes.extend_from_slice(&euckr_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.contains("그룹")); // reality (EUC-KR) wins, not the false UTF-8 claim
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingMismatch);
@@ -252,7 +275,7 @@ mod tests {
         let bytes =
             "<?xml version=\"1.0\" encoding=\"EUC-KR\"?><mapper namespace=\"그룹\"></mapper>"
                 .as_bytes();
-        let (source, diagnostics) = decode(bytes);
+        let (source, diagnostics, _encoding) = decode(bytes);
         assert!(source.contains("그룹")); // reality (UTF-8) wins
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingMismatch);
@@ -265,7 +288,7 @@ mod tests {
         bytes.extend_from_slice(&euckr_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (_, diagnostics) = decode(&bytes);
+        let (_, diagnostics, _encoding) = decode(&bytes);
         assert!(diagnostics.is_empty());
     }
 
@@ -276,7 +299,7 @@ mod tests {
         let bytes: &[u8] = &[
             0xFF, 0xFE, 0xFD, b'<', b'a', b'>', b'x', b'<', b'/', b'a', b'>',
         ];
-        let (_, diagnostics) = decode(bytes);
+        let (_, diagnostics, _encoding) = decode(bytes);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingUndetectable);
     }
@@ -296,7 +319,7 @@ mod tests {
         bytes.extend_from_slice(&sjis_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.contains("テスト"));
         assert!(diagnostics.is_empty());
     }
@@ -306,7 +329,7 @@ mod tests {
         let bytes =
             "<?xml version=\"1.0\" encoding=\"Shift_JIS\"?><mapper namespace=\"テスト\"></mapper>"
                 .as_bytes();
-        let (source, diagnostics) = decode(bytes);
+        let (source, diagnostics, _encoding) = decode(bytes);
         assert!(source.contains("テスト")); // reality (UTF-8) wins
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingMismatch);
@@ -321,7 +344,7 @@ mod tests {
         bytes.extend_from_slice(&gb_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.contains("测试"));
         assert!(diagnostics.is_empty());
     }
@@ -331,7 +354,7 @@ mod tests {
         let bytes =
             "<?xml version=\"1.0\" encoding=\"GB18030\"?><mapper namespace=\"测试\"></mapper>"
                 .as_bytes();
-        let (source, diagnostics) = decode(bytes);
+        let (source, diagnostics, _encoding) = decode(bytes);
         assert!(source.contains("测试")); // reality (UTF-8) wins
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingMismatch);
@@ -345,7 +368,7 @@ mod tests {
         bytes.extend_from_slice(&big5_bytes);
         bytes.extend_from_slice(b"\"></mapper>");
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.contains("測試"));
         assert!(diagnostics.is_empty());
     }
@@ -356,7 +379,7 @@ mod tests {
         let mut bytes = UTF16LE_BOM.to_vec();
         bytes.extend_from_slice(&utf16le_bytes(body));
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert_eq!(source, body);
         assert!(diagnostics.is_empty());
     }
@@ -369,7 +392,7 @@ mod tests {
             bytes.extend_from_slice(&unit.to_be_bytes());
         }
 
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert_eq!(source, body);
         assert!(diagnostics.is_empty());
     }
@@ -377,7 +400,7 @@ mod tests {
     #[test]
     fn unknown_declared_label_falls_through_with_mismatch_diagnostic() {
         let bytes = br#"<?xml version="1.0" encoding="totally-not-a-real-encoding"?><mapper namespace="x"></mapper>"#;
-        let (source, diagnostics) = decode(bytes);
+        let (source, diagnostics, _encoding) = decode(bytes);
         assert!(source.contains("<mapper"));
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::EncodingMismatch);
@@ -394,7 +417,7 @@ mod tests {
         bytes.extend_from_slice(
             b"<?xml version=\"1.0\" encoding=\"EUC-KR\"?><mapper namespace=\"x\"></mapper>",
         );
-        let (source, diagnostics) = decode(&bytes);
+        let (source, diagnostics, _encoding) = decode(&bytes);
         assert!(source.starts_with("<?xml")); // BOM gone, declaration intact
         assert!(source.contains("<mapper"));
         assert!(!source.contains('\u{FEFF}')); // the BOM itself doesn't leak into the decoded string

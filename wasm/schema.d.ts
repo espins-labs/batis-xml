@@ -99,6 +99,14 @@ export interface ParseResult {
   diagnostics: Diagnostic[];
   dialect: Dialect;
   /**
+   * The WHATWG name of the encoding the detection chain actually decoded the input with (`"UTF-8"`, `"EUC-KR"`, `"Shift_JIS"`, `"UTF-16LE"`, ...; `encoding_rs::Encoding::name()`'s own values, which are WHATWG-standard labels). `None` only when no decode was attempted at all (the raw-byte oversize cap rejected the input before `encoding.rs` ever ran) -- `parse` (already-decoded `&str` input) always reports `"UTF-8"`, since that's the one encoding a Rust `&str` can ever be.
+   *
+   * This is what makes the [`ByteSpan`] re-encoding caveat actionable: every span in this result is a byte offset into the UTF-8 text *after* decoding, so a consumer working with the **original** input bytes must decode them the same way first -- `new TextDecoder(result.encoding)` (Node.js/browsers both accept WHATWG labels directly), re-encode that decoded text to UTF-8, and slice spans against *that* buffer, not the original input bytes directly (see `wasm/README.md` for a worked recipe).
+   *
+   * BOM handling: for a document that opened with a byte-order mark, the mark is consumed during decoding and never appears in the decoded text -- spans are relative to the BOM-stripped content, same as every other span in this crate (offsets into what this crate's own decoding produced, not the original file's raw byte layout). A consumer re-decoding the original file with `TextDecoder` gets BOM-stripping for free (that's standard `TextDecoder` behavior for UTF-8/UTF-16 with a matching BOM), so no extra adjustment is needed on the consumer's side either.
+   */
+  encoding?: string | null;
+  /**
    * `None` when the root element is not a mapper/sqlMap (reason is reported as a diagnostic).
    */
   mapper?: Mapper | null;

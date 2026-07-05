@@ -1,5 +1,6 @@
 ---
 source: src/parse.rs
+assertion_line: 1992
 expression: result
 ---
 {
@@ -191,6 +192,7 @@ expression: result
     "fragments": [],
     "result_maps": []
   },
+  "encoding": "UTF-8",
   "diagnostics": [
     {
       "code": "duplicate_statement_id",
