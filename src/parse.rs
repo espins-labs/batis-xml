@@ -416,6 +416,7 @@ fn build_mapper(
                             &segments,
                             &mut result_map.mappings,
                             &mut diagnostics,
+                            0,
                         );
                         result_maps.push(result_map);
                     }
@@ -751,12 +752,33 @@ fn build_result_map(
 /// `<discriminator>`'s `<case>` children — their mappings flatten into the
 /// same `Vec`, matching the model (`ColumnMapping` has no nested-structure
 /// field).
+///
+/// Depth-limited (see [`crate::flatten::DEPTH_LIMIT`]): `depth` is the
+/// nesting level of this call (0 at the top), incremented on every
+/// `association`/`collection`/`discriminator`-`case` recursion. Pathologically
+/// deep nesting would otherwise reach that deep in the Rust call stack
+/// before there's any other way to detect it -- a stack overflow aborts
+/// the process (uncatchable). At the cap, the remaining subtree is
+/// skipped (no further mappings collected) with a diagnostic.
 fn collect_mappings(
     source: &str,
     segments: &[BodySegment],
     mappings: &mut Vec<ColumnMapping>,
     diagnostics: &mut Vec<Diagnostic>,
+    depth: u32,
 ) {
+    if depth >= crate::flatten::DEPTH_LIMIT {
+        diagnostics.push(Diagnostic {
+            code: DiagCode::NestingLimitExceeded,
+            span: None,
+            message: format!(
+                "resultMap association/collection/discriminator nesting exceeds the depth cap of {}; remaining subtree skipped",
+                crate::flatten::DEPTH_LIMIT
+            ),
+        });
+        return;
+    }
+
     for segment in segments {
         let BodySegment::DynamicTag { name, span } = segment else {
             continue; // whitespace between child elements
@@ -778,7 +800,7 @@ fn collect_mappings(
             "association" | "collection" => {
                 let (inner, mut d, _truncated) = capture_subtree(source, *span);
                 diagnostics.append(&mut d);
-                collect_mappings(source, &inner, mappings, diagnostics);
+                collect_mappings(source, &inner, mappings, diagnostics, depth + 1);
             }
             "discriminator" => {
                 let (inner, mut d, _truncated) = capture_subtree(source, *span);
@@ -792,7 +814,7 @@ fn collect_mappings(
                         if case_name == "case" {
                             let (case_inner, mut cd, _t) = capture_subtree(source, *case_span);
                             diagnostics.append(&mut cd);
-                            collect_mappings(source, &case_inner, mappings, diagnostics);
+                            collect_mappings(source, &case_inner, mappings, diagnostics, depth + 1);
                         }
                     }
                 }
@@ -3115,5 +3137,49 @@ mod tests {
                 end: expected_end
             }
         );
+    }
+
+    // --- A2 (cold code review): unbounded recursion in flatten_segments/
+    // expand_*/union_walk (dynamic-tag flattening) and collect_mappings
+    // (resultMap association/discriminator) could stack-overflow (abort,
+    // uncatchable) on pathologically deep nesting -- far shallower under
+    // wasm's 1MB stack. Both families now stop descending at
+    // DEPTH_LIMIT=256 and diagnose instead of continuing.
+
+    #[test]
+    fn deeply_nested_if_tags_in_a_statement_returns_normally_with_diagnostic() {
+        let mut body = String::from("x = 1");
+        for _ in 0..3000 {
+            body = format!(r#"<if test="a">{body}</if>"#);
+        }
+        let source =
+            format!(r#"<mapper namespace="x"><select id="s">SELECT 1{body}</select></mapper>"#);
+        let result = parse_str(&source); // must return normally, not abort
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::NestingLimitExceeded));
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "s");
+    }
+
+    #[test]
+    fn deeply_nested_association_in_a_result_map_returns_normally_with_diagnostic() {
+        let mut body = String::from(r#"<result column="c" property="p"/>"#);
+        for _ in 0..3000 {
+            body = format!(r#"<association property="a">{body}</association>"#);
+        }
+        let source = format!(
+            r#"<mapper namespace="x"><resultMap id="rm" type="T">{body}</resultMap></mapper>"#
+        );
+        let result = parse_str(&source); // must return normally, not abort
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::NestingLimitExceeded));
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.result_maps.len(), 1);
+        assert_eq!(mapper.result_maps[0].id.value, "rm");
     }
 }

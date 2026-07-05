@@ -116,6 +116,13 @@
           "enum": [
             "unterminated_placeholder"
           ]
+        },
+        {
+          "description": "Recursion depth exceeded 256 nesting levels (dynamic-tag flattening or resultMap association/discriminator nesting) -- the remaining subtree is treated as opaque (no text/mapping contribution) rather than risk a stack overflow. Cold code review B2/B3, 2026-07-05.",
+          "type": "string",
+          "enum": [
+            "nesting_limit_exceeded"
+          ]
         }
       ]
     },

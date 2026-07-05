@@ -80,6 +80,11 @@ pub enum DiagCode {
     /// A `#{`/`${`/legacy `#..#`/`$..$` placeholder never found its closing
     /// delimiter within the segment. The raw text is kept as-is (MM-07).
     UnterminatedPlaceholder,
+    /// Recursion depth exceeded 256 nesting levels (dynamic-tag flattening
+    /// or resultMap association/discriminator nesting) -- the remaining
+    /// subtree is treated as opaque (no text/mapping contribution) rather
+    /// than risk a stack overflow. Cold code review B2/B3, 2026-07-05.
+    NestingLimitExceeded,
 }
 
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

@@ -50,6 +50,17 @@ use crate::placeholder;
 /// Per-statement cap on flattened candidates (fixed by spec).
 pub(crate) const BRANCH_LIMIT: u32 = 32;
 
+/// Recursion depth cap (fixed by spec) shared by every recursive descent
+/// keyed per XML nesting level -- `flatten_segments`'s `expand_*` family,
+/// `union_walk`, and (parse.rs) `collect_mappings`. Pathologically deep
+/// nesting (thousands of levels) would otherwise reach this deep in the
+/// *Rust call stack* before any branch-count check ever gets a chance to
+/// bail out (each level's cartesian multiplication only happens on the
+/// way back up, after the full depth-first descent) -- a stack overflow
+/// aborts the process (uncatchable), unlike every other anomaly in this
+/// crate. Cold code review B2/B3, 2026-07-05.
+pub(crate) const DEPTH_LIMIT: u32 = 256;
+
 pub(crate) struct FlattenResult {
     pub(crate) sql: SqlText,
     pub(crate) property_paths: Vec<Spanned<String>>,
@@ -109,6 +120,22 @@ struct Ctx {
     diagnostics: Vec<Diagnostic>,
     property_paths: Vec<Spanned<String>>,
     found_includes: Vec<Spanned<IncludeRef>>,
+    /// Current recursion depth (nesting levels of dynamic tags descended
+    /// so far in this pass) -- see [`DEPTH_LIMIT`].
+    depth: u32,
+}
+
+/// The diagnostic emitted once a recursive descent hits [`DEPTH_LIMIT`].
+/// `span: None`, like `BranchLimitExceeded`: this is a whole-subtree
+/// truncation, not a single point in the source.
+fn nesting_limit_diagnostic() -> Diagnostic {
+    Diagnostic {
+        code: DiagCode::NestingLimitExceeded,
+        span: None,
+        message: format!(
+            "dynamic-tag nesting exceeds the depth cap of {DEPTH_LIMIT}; remaining subtree treated as opaque (no text contribution)"
+        ),
+    }
 }
 
 /// Flattens a statement or fragment body into its final [`SqlText`],
@@ -126,6 +153,7 @@ pub(crate) fn flatten_body(
         diagnostics: Vec::new(),
         property_paths: Vec::new(),
         found_includes: Vec::new(),
+        depth: 0,
     };
 
     match flatten_segments(source, segments, &mut attempt) {
@@ -154,6 +182,7 @@ pub(crate) fn flatten_body(
                 diagnostics: Vec::new(),
                 property_paths: Vec::new(),
                 found_includes: Vec::new(),
+                depth: 0,
             };
             let pieces = union_walk(source, segments, &mut ctx);
             let text = assemble(&pieces);
@@ -181,7 +210,27 @@ pub(crate) fn flatten_body(
 /// means the count exceeded [`BRANCH_LIMIT`] somewhere in this subtree (`n`
 /// is a valid lower bound, not necessarily the exact total) — the caller
 /// aborts cartesian expansion and falls back to [`union_walk`].
+///
+/// Depth-limited (see [`DEPTH_LIMIT`]): a thin wrapper around
+/// `flatten_segments_inner` that checks/increments/decrements `ctx.depth`
+/// around every recursive descent, so the check applies uniformly
+/// regardless of which `expand_*` helper calls back in here.
 fn flatten_segments(
+    source: &str,
+    segments: &[BodySegment],
+    ctx: &mut Ctx,
+) -> Result<Vec<Alt>, u64> {
+    if ctx.depth >= DEPTH_LIMIT {
+        ctx.diagnostics.push(nesting_limit_diagnostic());
+        return Ok(vec![empty_alt()]);
+    }
+    ctx.depth += 1;
+    let result = flatten_segments_inner(source, segments, ctx);
+    ctx.depth -= 1;
+    result
+}
+
+fn flatten_segments_inner(
     source: &str,
     segments: &[BodySegment],
     ctx: &mut Ctx,
@@ -656,6 +705,16 @@ fn try_combine(acc: &[Alt], local: &[Alt]) -> Result<Vec<Alt>, u64> {
 /// here (their prefix/suffix semantics only make sense per-branch, and
 /// there are no branches in a union).
 fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piece> {
+    // Depth-limited (see DEPTH_LIMIT): this walk is structurally separate
+    // from flatten_segments (invoked once, on the whole original tree,
+    // after the cartesian attempt above already bailed) and has its own
+    // unbounded recursion below -- it needs the same guard.
+    if ctx.depth >= DEPTH_LIMIT {
+        ctx.diagnostics.push(nesting_limit_diagnostic());
+        return Vec::new();
+    }
+    ctx.depth += 1;
+
     let mut pieces = Vec::new();
 
     for segment in segments {
@@ -721,6 +780,7 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
         }
     }
 
+    ctx.depth -= 1;
     pieces
 }
 

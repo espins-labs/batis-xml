@@ -25,7 +25,8 @@ export type DiagCode =
     )
   | "duplicate_attribute"
   | "invalid_entity"
-  | "unterminated_placeholder";
+  | "unterminated_placeholder"
+  | "nesting_limit_exceeded";
 /**
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "Dialect".
