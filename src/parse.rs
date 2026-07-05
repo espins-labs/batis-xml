@@ -338,6 +338,7 @@ fn build_mapper(
                         statement.id.as_ref(),
                         segments,
                         &mut diagnostics,
+                        &mut seen_ids,
                     );
 
                     // MM-05: lift top-level <include> markers.
@@ -690,6 +691,7 @@ fn extract_select_keys(
     parent_id: Option<&Spanned<String>>,
     segments: Vec<BodySegment>,
     diagnostics: &mut Vec<Diagnostic>,
+    seen_ids: &mut HashSet<(String, Option<String>)>,
 ) -> (Vec<Statement>, Vec<BodySegment>) {
     let mut children = Vec::new();
     let mut remaining = Vec::with_capacity(segments.len());
@@ -703,6 +705,7 @@ fn extract_select_keys(
                     parent_id,
                     span,
                     diagnostics,
+                    seen_ids,
                 ));
             }
             other => remaining.push(other),
@@ -720,6 +723,7 @@ fn build_select_key_statement(
     parent_id: Option<&Spanned<String>>,
     span: ByteSpan,
     diagnostics: &mut Vec<Diagnostic>,
+    seen_ids: &mut HashSet<(String, Option<String>)>,
 ) -> Statement {
     let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
     // MM-09: resultType (MyBatis) / resultClass (iBatis) — same dual-name
@@ -727,6 +731,17 @@ fn build_select_key_statement(
     let (result_class, mut result_diags) =
         read_class_ref(source, &attrs, &[b"resultType", b"resultClass"]);
     diagnostics.append(&mut result_diags);
+
+    // A13 (cold code review, major): read databaseId like every other
+    // real statement -- a <selectKey> can legitimately carry its own
+    // databaseId (independent of the parent statement's), and previously
+    // hardcoding `None` here meant two selectKeys under different
+    // databaseIds looked identical (both `id!selectKey`, both
+    // `database_id: None`), silently colliding in `seen_ids` and reporting
+    // a spurious duplicate even though MyBatis treats them as distinct,
+    // dialect-branched statements.
+    let (database_id, mut db_diags) = attr_value_spanned(source, &attrs, b"databaseId");
+    diagnostics.append(&mut db_diags);
 
     // Synthesized, never read from an `id` attribute (selectKey doesn't
     // have one) -- no MissingStatementId diagnostic either way: a missing
@@ -736,6 +751,27 @@ fn build_select_key_statement(
         value: format!("{}!selectKey", p.value),
         span,
     });
+
+    // A13: register the synthesized id (same (id, databaseId) key
+    // build_statement uses) in the shared seen_ids set -- previously
+    // selectKey's synthesized id was never recorded at all, so neither
+    // two selectKeys colliding on the same databaseId, nor a real
+    // statement literally named `x!selectKey`, would ever be flagged as
+    // DuplicateStatementId, even though both are genuine id collisions in
+    // the same output document.
+    if let Some(id) = &id {
+        let key = (
+            id.value.clone(),
+            database_id.as_ref().map(|d| d.value.clone()),
+        );
+        if !seen_ids.insert(key) {
+            diagnostics.push(Diagnostic {
+                code: DiagCode::DuplicateStatementId,
+                span: Some(id.span),
+                message: format!("duplicate statement id '{}'", id.value),
+            });
+        }
+    }
 
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     diagnostics.append(&mut inner_diags);
@@ -748,7 +784,7 @@ fn build_select_key_statement(
         kind: StatementKind::Select,
         span,
         id,
-        database_id: None,
+        database_id,
         sql: flattened.sql,
         includes: merge_includes(includes, flattened.found_includes),
         param_class: None,
@@ -1959,6 +1995,82 @@ mod tests {
         let parent = &mapper.statements[0];
         assert_eq!(parent.property_paths.len(), 1);
         assert_eq!(parent.property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn a13_select_key_reads_its_own_database_id() {
+        // Cold code review A13 (major): build_select_key_statement used to
+        // hardcode database_id: None instead of reading the attribute like
+        // every other statement-like tag.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long" databaseId="oracle">SELECT widget_seq.nextval FROM dual</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let child = &mapper.statements[1];
+        assert_eq!(child.database_id.as_ref().unwrap().value, "oracle");
+    }
+
+    #[test]
+    fn a13_two_select_keys_with_different_database_ids_are_not_duplicates() {
+        // A13: legitimate MyBatis databaseId branching -- two selectKeys
+        // synthesizing the *same* id ("insertWidget!selectKey") but with
+        // different databaseIds must not be flagged, exactly like two real
+        // statements sharing an id under different databaseIds.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long" databaseId="oracle">SELECT widget_seq.nextval FROM dual</selectKey>
+                <selectKey keyProperty="id" resultType="long" databaseId="mysql">SELECT LAST_INSERT_ID()</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn a13_two_select_keys_with_the_same_database_id_are_duplicates() {
+        // A13: same synthesized id, same (absent) databaseId -- a genuine
+        // collision that must be reported, just like two real statements
+        // sharing an id with no databaseId at all.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long">SELECT 1</selectKey>
+                <selectKey keyProperty="id" resultType="long">SELECT 2</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn a13_real_statement_colliding_with_a_synthesized_select_key_id_is_a_duplicate() {
+        // A13: build_select_key_statement never registered its synthesized
+        // id in seen_ids at all, so a real, separately authored statement
+        // literally named "insertWidget!selectKey" collided silently with
+        // the id synthesized by <insertWidget>'s own <selectKey> child.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long">SELECT 1</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+            <select id="insertWidget!selectKey">SELECT 2</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
     }
 
     /// Test harness for [`capture_body`]: `source` must be a single element
