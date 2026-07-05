@@ -100,6 +100,24 @@ than fixed now (cold code review, section C):
   outweighs removing a now-bounded performance ceiling that hasn't shown
   up as a real problem in the K-1 corpus or the 1MB/<50ms benchmark.
 
+  **Quantified** (cold code review C): measured (release build, local
+  Apple-silicon baseline, 3-iteration average) against a synthetic
+  worst-case document -- many independent `<select>` statements, each
+  wrapping its `SELECT` body in a chain of `<if>` tags nested right up to
+  `DEPTH_LIMIT` (tested at both 250 and 256 deep, no meaningful
+  difference), repeated to fill the target size. This parses at roughly
+  **~0.32 s/MB** (vs. the ~0.05 s/MB bar for the normal-case 1 MB/<50 ms
+  benchmark above -- about 6-7x slower under adversarial nesting), scaling
+  **linearly with total tag count**, not with document size directly or
+  with nesting depth once past the point where `DEPTH_LIMIT` caps any
+  single chain -- consistent with the O(N²) cost being paid once per
+  bounded-depth chain, not compounding across chains. At the 10 MiB
+  `MAX_INPUT_BYTES` cap this comes to roughly **3.3 seconds**, not the
+  multi-minute stalls unbounded nesting could previously produce. This
+  is a real slowdown a caller might notice, but it terminates promptly
+  and never approaches the 10-second range typically associated with a
+  request-handling timeout.
+
 ## Pre-publish checklist
 
 - [x] Generate `schema/batis-xml.v1.json` and pin it with a snapshot test
