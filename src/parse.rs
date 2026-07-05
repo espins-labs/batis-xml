@@ -3158,6 +3158,65 @@ mod tests {
         }
     }
 
+    /// Shared assertion for the B26 reproductions below: no span_map entry
+    /// may sit at or past the final text's own length.
+    fn assert_no_phantom_one_past_end_entry(sql: &SqlString) {
+        for (off, _) in &sql.span_map {
+            assert!(
+                (*off as usize) < sql.text.len(),
+                "span_map entry at offset {off} is >= text length {} (phantom one-past-end entry)",
+                sql.text.len()
+            );
+        }
+    }
+
+    #[test]
+    fn b26_where_span_map_has_no_phantom_entry_when_strip_empties_the_body() {
+        // Cold code review B26: with_prefix's split-point entry (pushed at
+        // offset == prefix.len()) becomes a phantom one-past-end entry
+        // when the leading strip consumes the *entire* body -- "AND " is
+        // non-whitespace, so it doesn't hit expand_where's "contributes
+        // nothing" shortcut, but the leading-AND/OR strip still eats all
+        // of it, leaving `kept` empty and the final text exactly
+        // "WHERE " (length == prefix.len()).
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where>AND </where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE ");
+        assert_no_phantom_one_past_end_entry(&vs[0].text);
+    }
+
+    #[test]
+    fn b26_set_span_map_has_no_phantom_entry_when_strip_empties_the_body() {
+        // Same class: a <set> body that's nothing but a leading comma is
+        // entirely consumed by the leading-comma strip (B17).
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set>,</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "UPDATE t SET ");
+        assert_no_phantom_one_past_end_entry(&vs[0].text);
+    }
+
+    #[test]
+    fn b26_trim_span_map_has_no_phantom_entry_when_strip_empties_the_body() {
+        // Same class: a <trim prefixOverrides> body that's nothing but
+        // the override match itself is entirely consumed.
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="WHERE" prefixOverrides="AND ">AND </trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "WHERE ");
+        assert_no_phantom_one_past_end_entry(&vs[0].text);
+    }
+
     #[test]
     fn b20_set_span_map_has_no_phantom_entry_when_text_ends_on_a_placeholder() {
         // Cold code review B20: the normalize/assemble path itself (not
