@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <statement id="widgetDAO.upsertWidget" parameterClass="widget">
+    INSERT INTO demo_widget (widget_id, widget_name)
+    VALUES (#id#, #widgetName#)
+    ON DUPLICATE KEY UPDATE widget_name = #widgetName#
+  </statement>
+</sqlMap>

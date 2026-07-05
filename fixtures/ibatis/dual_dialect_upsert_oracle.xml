@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <statement id="widgetDAO.upsertWidget" parameterClass="widget">
+    MERGE INTO demo_widget dw
+    USING (SELECT #id# AS widget_id FROM dual) src
+    ON (dw.widget_id = src.widget_id)
+    WHEN MATCHED THEN UPDATE SET widget_name = #widgetName#
+    WHEN NOT MATCHED THEN INSERT (widget_id, widget_name) VALUES (#id#, #widgetName#)
+  </statement>
+</sqlMap>

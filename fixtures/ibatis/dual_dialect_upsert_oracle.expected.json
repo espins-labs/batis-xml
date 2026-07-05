@@ -1,0 +1,101 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "generic",
+        "span": {
+          "start": 166,
+          "end": 509
+        },
+        "id": {
+          "value": "widgetDAO.upsertWidget",
+          "span": {
+            "start": 181,
+            "end": 203
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    MERGE INTO demo_widget dw\n    USING (SELECT ? AS widget_id FROM dual) src\n    ON (dw.widget_id = src.widget_id)\n    WHEN MATCHED THEN UPDATE SET widget_name = ?\n    WHEN NOT MATCHED THEN INSERT (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "span_map": [
+                  [
+                    0,
+                    229
+                  ],
+                  [
+                    50,
+                    282
+                  ],
+                  [
+                    165,
+                    408
+                  ],
+                  [
+                    233,
+                    479
+                  ],
+                  [
+                    236,
+                    493
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 221,
+            "end": 227
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 279,
+              "end": 281
+            }
+          },
+          {
+            "value": "widgetName",
+            "span": {
+              "start": 397,
+              "end": 407
+            }
+          },
+          {
+            "value": "id",
+            "span": {
+              "start": 476,
+              "end": 478
+            }
+          },
+          {
+            "value": "widgetName",
+            "span": {
+              "start": 482,
+              "end": 492
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

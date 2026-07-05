@@ -1,0 +1,90 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "generic",
+        "span": {
+          "start": 166,
+          "end": 384
+        },
+        "id": {
+          "value": "widgetDAO.upsertWidget",
+          "span": {
+            "start": 181,
+            "end": 203
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    INSERT INTO demo_widget (widget_id, widget_name)\n    VALUES (?, ?)\n    ON DUPLICATE KEY UPDATE widget_name = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    229
+                  ],
+                  [
+                    67,
+                    299
+                  ],
+                  [
+                    70,
+                    313
+                  ],
+                  [
+                    115,
+                    369
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 221,
+            "end": 227
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 296,
+              "end": 298
+            }
+          },
+          {
+            "value": "widgetName",
+            "span": {
+              "start": 302,
+              "end": 312
+            }
+          },
+          {
+            "value": "widgetName",
+            "span": {
+              "start": 358,
+              "end": 368
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

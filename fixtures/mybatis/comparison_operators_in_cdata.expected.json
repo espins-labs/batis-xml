@@ -1,0 +1,104 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 487
+        },
+        "id": {
+          "value": "searchWidgetsByPriceRange",
+          "span": {
+            "start": 221,
+            "end": 246
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    \n    WHERE widget_price > ?\n      AND widget_price < ?\n      AND created_at >= ?\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    291
+                  ],
+                  [
+                    56,
+                    356
+                  ],
+                  [
+                    83,
+                    393
+                  ],
+                  [
+                    110,
+                    430
+                  ],
+                  [
+                    136,
+                    467
+                  ],
+                  [
+                    141,
+                    475
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 260,
+            "end": 289
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "minPrice",
+            "span": {
+              "start": 384,
+              "end": 392
+            }
+          },
+          {
+            "value": "maxPrice",
+            "span": {
+              "start": 421,
+              "end": 429
+            }
+          },
+          {
+            "value": "startDate",
+            "span": {
+              "start": 457,
+              "end": 466
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}
