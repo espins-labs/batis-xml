@@ -27,6 +27,21 @@ matching surface for a *consumer* of this crate's own output -- match on
 `code` there; normativity here is about what a from-scratch port's output
 must equal, a different question.)
 
+**Exception (B40, cold code review):** a `message` that embeds a
+recovery/dependency-derived error's own `Display` text verbatim is
+*not* part of that normative surface — only the `code` and `span` are,
+for these specific diagnostics. Two fixtures currently do this:
+`orphan_closing_tag_recovery.expected.json` (`UnclosedTag`, embedding
+`quick_xml::Error`'s own message for the orphan/mismatched-tag
+recovery path) and `entity_heavy_text.expected.json` (`InvalidEntity`,
+embedding `quick_xml::escape::EscapeError`'s message for the
+unresolvable-entity case). A from-scratch port necessarily uses a
+*different* XML tokenizer with its own error prose — requiring it to
+reproduce this crate's specific dependency's wording byte-for-byte
+would make the "spec" churn on every quick-xml version bump (see the
+A10/A18 CHANGELOG entries) for no benefit to a port, which has no such
+dependency to match in the first place.
+
 ## Authoring rules
 
 1. **Synthetic only**: fixtures are written by structural imitation
