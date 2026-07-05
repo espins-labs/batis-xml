@@ -127,6 +127,8 @@ export interface Diagnostic {
  *
  * Caveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents decoded from any other encoding (EUC-KR, Shift_JIS, GB18030, UTF-16, ... -- see `encoding.rs`, which supports every WHATWG encoding via a BOM/declared-label-driven chain, not just EUC-KR), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. This applies uniformly to every re-encoded document, not just Korean legacy files. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.
  *
+ * A leading byte-order mark is never part of this text either way: a BOM is consumed during decoding for [`crate::parse_bytes`] (see [`ParseResult::encoding`]'s doc comment) and stripped from the input string itself for [`crate::parse`] (a caller can hand it an already-decoded string that still carries a BOM, e.g. read from a file without stripping it first) -- both entry points agree that every span is relative to the BOM-stripped content.
+ *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "ByteSpan".
  */
