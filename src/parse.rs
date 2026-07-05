@@ -3211,6 +3211,76 @@ mod tests {
     }
 
     #[test]
+    fn a12_include_first_and_a_different_include_last_both_flagged() {
+        // Cold code review A12 (major): the early `return` after the
+        // first-position check used to fire unconditionally whenever the
+        // first element was an include, silently skipping the
+        // last-position check whenever the wrapper had a *different*
+        // include as its last element too. Both must be flagged here --
+        // two distinct diagnostics, one per include.
+        let source = r#"<mapper namespace="x">
+            <sql id="fragA">a = 1</sql>
+            <sql id="fragB">b = 2</sql>
+            <select id="x"><where><include refid="fragA"/> AND c = 3 AND <include refid="fragB"/></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let boundary_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::IncludeAtWrapperBoundary)
+            .collect();
+        assert_eq!(
+            boundary_diags.len(),
+            2,
+            "both the first include and the distinct last include must be flagged"
+        );
+        let frag_a_span = source.find("<include refid=\"fragA\"").unwrap() as u32;
+        let frag_b_span = source.find("<include refid=\"fragB\"").unwrap() as u32;
+        assert!(boundary_diags
+            .iter()
+            .any(|d| d.span.unwrap().start == frag_a_span));
+        assert!(boundary_diags
+            .iter()
+            .any(|d| d.span.unwrap().start == frag_b_span));
+    }
+
+    #[test]
+    fn a12_single_include_as_only_content_is_flagged_exactly_once() {
+        // Regression guard for the fix above: a single include (first ==
+        // last, the same element) must still be reported only once, not
+        // twice.
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">status = 'Y'</sql>
+            <select id="a">SELECT 1<where><include refid="frag"/></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let boundary_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::IncludeAtWrapperBoundary)
+            .collect();
+        assert_eq!(boundary_diags.len(), 1);
+    }
+
+    #[test]
+    fn a12_back_to_back_includes_as_only_content_both_flagged() {
+        // Two adjacent includes with no other content: distinct first and
+        // last elements, both must be flagged.
+        let source = r#"<mapper namespace="x">
+            <sql id="fragA">a = 1</sql>
+            <sql id="fragB">b = 2</sql>
+            <select id="x"><where><include refid="fragA"/><include refid="fragB"/></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let boundary_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::IncludeAtWrapperBoundary)
+            .collect();
+        assert_eq!(boundary_diags.len(), 2);
+    }
+
+    #[test]
     fn a7_no_include_in_where_does_not_emit_boundary_diagnostic() {
         let source = r#"<mapper namespace="x">
             <select id="a">SELECT 1<where>status = 'Y'</where></select>

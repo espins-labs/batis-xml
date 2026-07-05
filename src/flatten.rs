@@ -506,10 +506,20 @@ fn check_include_at_wrapper_boundary(
         });
     };
 
+    // A12 (cold code review, major): the early `return` after the first-
+    // position check must only fire when first and last are the *same*
+    // element (a single include as the wrapper's only content) -- it used
+    // to fire unconditionally whenever the first element was an include,
+    // which silently skipped the last-position check whenever the wrapper
+    // had 2+ content elements starting with an include (e.g. an include
+    // first *and* a different include last). `content.len() == 1` is
+    // exactly the "first and last are the same element" condition.
     if let Some(RunItem::Tag { name, span }) = content.first() {
         if name.as_str() == "include" {
             emit(**span, ctx);
-            return; // don't double-report a single include that's both first and last
+            if content.len() == 1 {
+                return; // first and last are the same element -- don't double-report it
+            }
         }
     }
     if let Some(RunItem::Tag { name, span }) = content.last() {
