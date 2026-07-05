@@ -396,23 +396,36 @@ impl<'de> Deserialize<'de> for SqlText {
                         return Err(serde::de::Error::invalid_length(0, &"a single-key map"));
                     }
                 };
-                match key.as_str() {
-                    "variants" => Ok(SqlText::Variants(map.next_value()?)),
+                let result = match key.as_str() {
+                    "variants" => SqlText::Variants(map.next_value()?),
                     "union" => {
                         let union: UnionRepr = map.next_value()?;
-                        Ok(SqlText::Union {
+                        SqlText::Union {
                             text: union.text,
                             branch_count: union.branch_count,
-                        })
+                        }
                     }
                     _ => {
                         // Forward-compat: some other SqlText shape this
                         // build doesn't recognize -- consume and discard
                         // its value rather than failing the whole document.
                         map.next_value::<serde::de::IgnoredAny>()?;
-                        Ok(SqlText::Unrecognized)
+                        SqlText::Unrecognized
                     }
+                };
+                // B28 (cold code review): drain the MapAccess for a second
+                // key before returning. Without this, a genuinely
+                // malformed multi-key map (e.g. `{"variants": [...],
+                // "extra": 1}`) left its second key/value unconsumed --
+                // the *enclosing* deserializer would then choke on
+                // leftover input with a confusing "trailing characters"/
+                // unexpected-comma error instead of a clear message
+                // naming the actual problem (more than one key where
+                // exactly one was expected).
+                if map.next_key::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &"a single-key map"));
                 }
+                Ok(result)
             }
         }
 
@@ -605,6 +618,26 @@ mod tests {
         let json = r#"{"some_future_shape":{"anything":"goes","nested":[1,2,3]}}"#;
         let sql: SqlText = serde_json::from_str(json).expect("deserializes, doesn't fail");
         assert_eq!(sql, SqlText::Unrecognized);
+    }
+
+    #[test]
+    fn b28_sql_text_multi_key_map_gets_a_clear_error_not_a_trailing_data_one() {
+        // Cold code review B28: visit_map used to return as soon as it
+        // consumed the first key's value, leaving a second key/value
+        // unconsumed in the MapAccess -- serde_json would then choke on
+        // the leftover input with a confusing "trailing characters"-style
+        // error rather than a message naming the actual problem (more
+        // than one key where exactly one was expected). This checks both
+        // that deserialization fails *and* that the message names the
+        // real cause instead of a generic trailing-data complaint.
+        let json = r#"{"variants":[],"extra":1}"#;
+        let err = serde_json::from_str::<SqlText>(json)
+            .expect_err("a multi-key map must fail deserialization");
+        let message = err.to_string();
+        assert!(
+            message.contains("single-key map"),
+            "expected an error naming the single-key-map requirement, got: {message}"
+        );
     }
 
     #[test]
