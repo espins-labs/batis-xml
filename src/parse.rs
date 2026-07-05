@@ -251,6 +251,27 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                     diagnostics.push(diag);
                 }
             }
+            // B46 (cold code review, moderate): a named/numeric entity
+            // reference before the root element (e.g. `&nbsp;<mapper...>`)
+            // used to fall into the catch-all arm below and vanish with
+            // zero diagnostics even though the identical reference inside
+            // a statement body gets `InvalidEntity` from capture_body's
+            // own `GeneralRef` arm -- see `resolve_general_ref`'s doc
+            // comment for the shared resolvable/unresolvable semantics.
+            // The decoded text itself is discarded either way (pre-root
+            // content has nowhere to go), same as ordinary pre-root text.
+            Ok(Event::GeneralRef(_entity_ref)) => {
+                let end = reader.buffer_position() as usize;
+                let raw_span = ByteSpan {
+                    start: start as u32,
+                    end: end as u32,
+                };
+                let raw_text = &source[raw_span.start as usize..raw_span.end as usize];
+                let (_decoded, diag) = resolve_general_ref(raw_text, raw_span);
+                if let Some(diag) = diag {
+                    diagnostics.push(diag);
+                }
+            }
             _ => continue,
         }
     }
@@ -644,6 +665,24 @@ fn build_mapper(
                     .map(|d| d.into_owned())
                     .unwrap_or_else(|_| source[child_start as usize..].to_string());
                 if let Some(diag) = dangling_amp_diagnostic(&decoded, child_start as usize) {
+                    diagnostics.push(diag);
+                }
+            }
+            // B46 (cold code review, moderate): same gap as parse_str's
+            // pre-root loop, one layer down -- a named/numeric entity
+            // reference between sibling statements (e.g. `<mapper>&nbsp;
+            // <select...>`) used to vanish with zero diagnostics. See
+            // `resolve_general_ref`'s doc comment; the decoded text is
+            // discarded either way, same as any other mapper-level text.
+            Ok(Event::GeneralRef(_entity_ref)) => {
+                let end = reader.buffer_position() as usize;
+                let raw_span = ByteSpan {
+                    start: child_start as u32,
+                    end: end as u32,
+                };
+                let raw_text = &source[raw_span.start as usize..raw_span.end as usize];
+                let (_decoded, diag) = resolve_general_ref(raw_text, raw_span);
+                if let Some(diag) = diag {
                     diagnostics.push(diag);
                 }
             }
@@ -1478,6 +1517,31 @@ fn dangling_amp_diagnostic(decoded: &str, text_start: usize) -> Option<Diagnosti
     })
 }
 
+/// B46 (cold code review): resolves one `Event::GeneralRef`'s raw bytes
+/// (`&name;` / `&#NN;` / `&#xNN;`), shared by `capture_body`'s in-body arm
+/// and the mapper-level/pre-root loops in `parse_str`/`build_mapper`.
+/// Returns the decoded text (falls back to the raw, still-escaped text on
+/// failure -- degrade gracefully rather than dropping content) plus a
+/// diagnostic exactly when the reference is *unresolvable* -- an unknown
+/// named reference (e.g. `&nbsp;`) or an invalid numeric one (e.g. an
+/// unpaired UTF-16 surrogate codepoint like `&#xD800;`). A resolvable
+/// reference (`&amp;`, `&#65;`) never gets a diagnostic here, at any layer:
+/// this is the single source of truth both call sites share so "resolvable
+/// vs. not" can't drift between them.
+fn resolve_general_ref(raw_text: &str, raw_span: ByteSpan) -> (String, Option<Diagnostic>) {
+    match quick_xml::escape::unescape(raw_text) {
+        Ok(resolved) => (resolved.into_owned(), None),
+        Err(err) => {
+            let diag = Diagnostic {
+                code: DiagCode::InvalidEntity,
+                span: Some(raw_span),
+                message: format!("unresolvable entity reference: {err}"),
+            };
+            (raw_text.to_string(), Some(diag))
+        }
+    }
+}
+
 /// MM-13: classifies a reader error for a recovery diagnostic. No new
 /// `DiagCode` is warranted for this — `UnclosedTag` already covers "the
 /// tag structure around here is broken"; only the message differs between
@@ -1619,19 +1683,13 @@ pub(crate) fn capture_body(
                     end: end as u32,
                 };
                 let raw_text = &source[raw_span.start as usize..raw_span.end as usize];
-                let decoded = match quick_xml::escape::unescape(raw_text) {
-                    Ok(resolved) => resolved.into_owned(),
-                    Err(err) => {
-                        diagnostics.push(Diagnostic {
-                            code: DiagCode::InvalidEntity,
-                            span: Some(raw_span),
-                            message: format!("unresolvable entity reference: {err}"),
-                        });
-                        // Degrade gracefully: keep the raw (still-escaped)
-                        // text rather than dropping the segment.
-                        raw_text.to_string()
-                    }
-                };
+                // B46: resolution + diagnostic logic now shared with the
+                // mapper-level/pre-root loops via `resolve_general_ref` --
+                // see its doc comment for what counts as "unresolvable".
+                let (decoded, diag) = resolve_general_ref(raw_text, raw_span);
+                if let Some(diag) = diag {
+                    diagnostics.push(diag);
+                }
                 segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
             }
             Ok(Event::CData(cdata)) => {
@@ -3088,6 +3146,164 @@ mod tests {
                 .count(),
             1,
             "expected exactly one InvalidEntity diagnostic for the in-body '&', got {:?}",
+            result.diagnostics
+        );
+    }
+
+    // B46 (cold code review, moderate): B44 added `Event::Text` arms (dangling
+    // '&') to parse_str's top-level loop and build_mapper's loop, but not
+    // `Event::GeneralRef` arms -- so a well-formed but *unresolvable* named/
+    // numeric reference (`&nbsp;`, `&#xD800;`) at those layers still vanished
+    // with zero diagnostics, even though the identical reference inside a
+    // statement body gets `InvalidEntity` from capture_body. These pin the
+    // fix (`resolve_general_ref`, shared with capture_body's own arm).
+
+    #[test]
+    fn b46_unresolvable_named_entity_before_root_is_diagnosed() {
+        let source = "&nbsp;<mapper namespace=\"x\"></mapper>";
+        let result = parse_str(source);
+        assert_eq!(result.dialect, Dialect::Mybatis);
+        assert!(result.mapper.is_some(), "the root element must still parse");
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, 0);
+        assert_eq!(
+            span.end,
+            "&nbsp;".len() as u32,
+            "span must cover the full reference, '&' through ';' inclusive"
+        );
+    }
+
+    #[test]
+    fn b46_unresolvable_named_entity_at_mapper_level_is_diagnosed() {
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select>&nbsp;<select id="b">SELECT 2</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.statements.len(),
+            2,
+            "both statements must still be captured despite the stray reference between them"
+        );
+
+        let ref_pos = source.find("&nbsp;").unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, ref_pos);
+        assert_eq!(span.end, ref_pos + "&nbsp;".len() as u32);
+    }
+
+    #[test]
+    fn b46_invalid_numeric_reference_at_mapper_level_is_diagnosed() {
+        // &#xD800; is an unpaired UTF-16 surrogate codepoint -- never a
+        // valid Unicode scalar value, so it's unresolvable regardless of
+        // being well-formed XML syntax.
+        let source = r#"<mapper namespace="x">&#xD800;<select id="a">SELECT 1</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+
+        let ref_pos = source.find("&#xD800;").unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, ref_pos);
+        assert_eq!(span.end, ref_pos + "&#xD800;".len() as u32);
+    }
+
+    #[test]
+    fn b46_unresolvable_named_entity_at_sqlmap_level_is_diagnosed() {
+        // Same gap, iBatis dialect: `<sqlMap>` shares build_mapper with
+        // `<mapper>`, so this must be covered identically.
+        let source = r#"<sqlMap><statement id="a">SELECT 1</statement>&nbsp;<statement id="b">SELECT 2</statement></sqlMap>"#;
+        let result = parse_str(source);
+        assert_eq!(result.dialect, Dialect::Ibatis);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+
+        let ref_pos = source.find("&nbsp;").unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, ref_pos);
+        assert_eq!(span.end, ref_pos + "&nbsp;".len() as u32);
+    }
+
+    #[test]
+    fn b46_resolvable_entity_at_mapper_level_gets_no_diagnostic() {
+        // `&amp;` is a well-formed, resolvable reference -- must not be
+        // flagged as InvalidEntity at mapper level, same as it wouldn't be
+        // inside a statement body.
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select>&amp;<select id="b">SELECT 2</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+        assert!(
+            !result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::InvalidEntity),
+            "a resolvable entity reference at mapper level must not be diagnosed, got {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn b46_unresolvable_entity_inside_statement_body_is_not_double_diagnosed() {
+        // Same guard as B44's in-body test, but for GeneralRef: the
+        // mapper-level check must not double-diagnose a reference that's
+        // actually inside a statement's own body -- that GeneralRef event
+        // is consumed by capture_body itself and never reaches
+        // build_mapper's loop at all.
+        let source = r#"<mapper namespace="x"><select id="a">a&nbsp;b</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::InvalidEntity)
+                .count(),
+            1,
+            "expected exactly one InvalidEntity diagnostic for the in-body reference, got {:?}",
             result.diagnostics
         );
     }
