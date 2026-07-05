@@ -1,5 +1,11 @@
 # batis-xml
 
+[![crates.io](https://img.shields.io/crates/v/batis-xml.svg)](https://crates.io/crates/batis-xml)
+[![docs.rs](https://img.shields.io/docsrs/batis-xml)](https://docs.rs/batis-xml)
+[![npm](https://img.shields.io/npm/v/batis-xml.svg)](https://www.npmjs.com/package/batis-xml)
+[![CI](https://github.com/espins-labs/batis-xml/actions/workflows/ci.yml/badge.svg)](https://github.com/espins-labs/batis-xml/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/batis-xml.svg)](#license)
+
 **Parser and dynamic-SQL flattener for MyBatis and iBatis mapper XML.**
 
 Legacy enterprise codebases keep years of business logic inside mapper XML —
@@ -42,7 +48,8 @@ mapper XML ──▶ batis-xml ──▶ { statements, flattened SQL variants,
 batis-xml = "0.1"
 ```
 
-or `cargo add batis-xml`. The optional `schema` feature adds
+or `cargo add batis-xml`. Full API documentation is on
+[docs.rs](https://docs.rs/batis-xml). The optional `schema` feature adds
 `schemars`-generated JSON Schema types (the pinned schema itself ships in
 `schema/batis-xml.v1.json` regardless).
 
@@ -164,9 +171,9 @@ short-name resolution this single-file view can't see.
 
 ## Status
 
-MM-01 through MM-14 are complete: parsing, dynamic-SQL flattening,
-`<include>` resolution, `resultMap`s, placeholder normalization, encoding
-detection, and hostile-input recovery are all implemented and tested.
+Parsing, dynamic-SQL flattening, `<include>` resolution, `resultMap`s,
+placeholder normalization, encoding detection, and hostile-input recovery
+are all implemented and tested.
 
 Validated against a 195-file real-world legacy mapper corpus (MyBatis +
 iBatis): 100% parse success (no panics, no `Err`), with statement/binding
