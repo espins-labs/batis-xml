@@ -380,6 +380,7 @@ fn build_mapper(
                         source,
                         dialect,
                         statement.id.as_ref(),
+                        statement.database_id.as_ref(),
                         segments,
                         &mut diagnostics,
                         &mut seen_ids,
@@ -843,6 +844,7 @@ fn extract_select_keys(
     source: &str,
     dialect: Dialect,
     parent_id: Option<&Spanned<String>>,
+    parent_database_id: Option<&Spanned<String>>,
     segments: Vec<BodySegment>,
     diagnostics: &mut Vec<Diagnostic>,
     seen_ids: &mut HashSet<(String, Option<String>)>,
@@ -857,6 +859,7 @@ fn extract_select_keys(
                     source,
                     dialect,
                     parent_id,
+                    parent_database_id,
                     span,
                     diagnostics,
                     seen_ids,
@@ -875,6 +878,7 @@ fn build_select_key_statement(
     source: &str,
     dialect: Dialect,
     parent_id: Option<&Spanned<String>>,
+    parent_database_id: Option<&Spanned<String>>,
     span: ByteSpan,
     diagnostics: &mut Vec<Diagnostic>,
     seen_ids: &mut HashSet<(String, Option<String>)>,
@@ -894,8 +898,21 @@ fn build_select_key_statement(
     // `database_id: None`), silently colliding in `seen_ids` and reporting
     // a spurious duplicate even though MyBatis treats them as distinct,
     // dialect-branched statements.
+    //
+    // A20 (cold code review, major): A13 stopped there, so the *other*
+    // direction of the same bug remained -- the canonical dual-dialect
+    // pattern (two `<insert id="ins" databaseId="oracle|mysql">`, each
+    // with a plain `<selectKey>` that carries no `databaseId` of its
+    // own) synthesized two `ins!selectKey` statements that both read
+    // `database_id: None`, so they collided in `seen_ids` as a spurious
+    // `DuplicateStatementId` even though the parents are legitimately
+    // dialect-branched. A `<selectKey>` with no `databaseId` attribute
+    // inherits the parent statement's; an explicit one on the
+    // `<selectKey>` itself still wins (checked first, so this only
+    // fills in the absence).
     let (database_id, mut db_diags) = attr_value_spanned(source, &attrs, b"databaseId");
     diagnostics.append(&mut db_diags);
+    let database_id = database_id.or_else(|| parent_database_id.cloned());
 
     // Synthesized, never read from an `id` attribute (selectKey doesn't
     // have one) -- no MissingStatementId diagnostic either way: a missing
@@ -2306,6 +2323,84 @@ mod tests {
                 INSERT INTO widget (id) VALUES (#{id})
             </insert>
             <select id="insertWidget!selectKey">SELECT 2</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn a20_select_key_without_its_own_database_id_inherits_the_parents() {
+        // Cold code review A20 (major): the canonical dual-dialect
+        // pattern -- two <insert>s sharing an id, each with its own
+        // databaseId, each carrying a plain <selectKey> with no
+        // databaseId of its own -- used to synthesize two
+        // "insertWidget!selectKey" statements that both read
+        // `database_id: None`, colliding as a spurious duplicate even
+        // though the parents are legitimately dialect-branched. Each
+        // selectKey must both report its parent's databaseId AND not be
+        // flagged.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget" databaseId="oracle">
+                <selectKey keyProperty="id" resultType="long">SELECT widget_seq.nextval FROM dual</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+            <insert id="insertWidget" databaseId="mysql">
+                <selectKey keyProperty="id" resultType="long">SELECT LAST_INSERT_ID()</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        // statements: [insert(oracle), selectKey(oracle), insert(mysql), selectKey(mysql)]
+        let oracle_key = &mapper.statements[1];
+        let mysql_key = &mapper.statements[3];
+        assert_eq!(oracle_key.database_id.as_ref().unwrap().value, "oracle");
+        assert_eq!(mysql_key.database_id.as_ref().unwrap().value, "mysql");
+        assert!(
+            !result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::DuplicateStatementId),
+            "dialect-branched selectKeys must not collide: {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn a20_select_key_s_own_database_id_overrides_the_parent_s() {
+        // An explicit databaseId on <selectKey> itself still wins over
+        // inheriting the parent's -- inheritance only fills in absence.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget" databaseId="oracle">
+                <selectKey keyProperty="id" resultType="long" databaseId="mysql">SELECT LAST_INSERT_ID()</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let child = &mapper.statements[1];
+        assert_eq!(
+            child.database_id.as_ref().unwrap().value,
+            "mysql",
+            "selectKey's own databaseId must win over the parent's"
+        );
+    }
+
+    #[test]
+    fn a20_two_select_keys_with_the_same_effective_database_id_are_still_duplicates() {
+        // Two selectKeys that resolve to the *same* effective databaseId
+        // (one inherited, one explicit but matching) is a genuine
+        // collision, not a dialect branch -- inheritance must not create
+        // a loophole that suppresses a real duplicate.
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget" databaseId="oracle">
+                <selectKey keyProperty="id" resultType="long">SELECT 1 FROM dual</selectKey>
+                <selectKey keyProperty="id" resultType="long" databaseId="oracle">SELECT 2 FROM dual</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
         </mapper>"#;
         let result = parse_str(source);
         assert!(result

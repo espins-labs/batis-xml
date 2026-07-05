@@ -1,0 +1,272 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "insert",
+        "span": {
+          "start": 209,
+          "end": 515
+        },
+        "id": {
+          "value": "insertWidget",
+          "span": {
+            "start": 221,
+            "end": 233
+          }
+        },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 247,
+            "end": 253
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "span_map": [
+                  [
+                    0,
+                    301
+                  ],
+                  [
+                    5,
+                    426
+                  ],
+                  [
+                    68,
+                    493
+                  ],
+                  [
+                    71,
+                    502
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 270,
+            "end": 299
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 490,
+              "end": 492
+            }
+          },
+          {
+            "value": "name",
+            "span": {
+              "start": 497,
+              "end": 501
+            }
+          }
+        ]
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 306,
+          "end": 426
+        },
+        "id": {
+          "value": "insertWidget!selectKey",
+          "span": {
+            "start": 306,
+            "end": 426
+          }
+        },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 247,
+            "end": 253
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n      SELECT widget_seq.nextval FROM dual\n    ",
+                "span_map": [
+                  [
+                    0,
+                    367
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 346,
+            "end": 350
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "insert",
+        "span": {
+          "start": 518,
+          "end": 810
+        },
+        "id": {
+          "value": "insertWidget",
+          "span": {
+            "start": 530,
+            "end": 542
+          }
+        },
+        "database_id": {
+          "value": "mysql",
+          "span": {
+            "start": 556,
+            "end": 561
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "span_map": [
+                  [
+                    0,
+                    609
+                  ],
+                  [
+                    5,
+                    721
+                  ],
+                  [
+                    68,
+                    788
+                  ],
+                  [
+                    71,
+                    797
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 578,
+            "end": 607
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 785,
+              "end": 787
+            }
+          },
+          {
+            "value": "name",
+            "span": {
+              "start": 792,
+              "end": 796
+            }
+          }
+        ]
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 614,
+          "end": 721
+        },
+        "id": {
+          "value": "insertWidget!selectKey",
+          "span": {
+            "start": 614,
+            "end": 721
+          }
+        },
+        "database_id": {
+          "value": "mysql",
+          "span": {
+            "start": 556,
+            "end": 561
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n      SELECT LAST_INSERT_ID()\n    ",
+                "span_map": [
+                  [
+                    0,
+                    674
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 654,
+            "end": 658
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}
