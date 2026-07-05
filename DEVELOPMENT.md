@@ -3,13 +3,48 @@
 ## Design spec (single source of truth)
 
 The internal design spec (maintained privately, not in this repo) holds the
-micro-feature tables (MM-01..14), invariants, definition of done, corpus
-survey, and performance acceptance bar (round-3 target: answer the chain
-question in 1 call, ≤ 6,315 bytes of context, 4/4 recall).
+detailed micro-feature tables, per-feature edge-case lists, invariants,
+definition of done, corpus survey, and performance acceptance bar. Those
+details change often; what is stable is summarized below so the id schemes
+used throughout the test suite are readable without the private spec.
 
 The **public** contract -- what ports and downstream consumers actually
 conform to -- is the published JSON schema (`schema/batis-xml.v1.json`)
 plus the conformance corpus in `fixtures/`.
+
+## Id schemes used in test names
+
+Test names carry a prefix tying them back to what they protect:
+
+- **`mm_<nn>_*`** -- micro-feature id (the feature decomposition, table
+  below). The test exercises that feature's contract.
+- **`a<nn>_*` / `b<nn>_*`** -- cold-code-review finding ids. Before 0.1.0
+  the crate went through seven independent adversarial review rounds;
+  every finding got a sequential id (`A` = blocker/major, must fix;
+  `B` = recommended fix; `C` = consciously deferred, documented in
+  "Known limitations"). A test named `a18_*` is the regression guard for
+  finding A18, and the commit introducing it explains the finding --
+  `git log --grep 'A18'` (or the id in CHANGELOG.md) gives the story.
+  The numbering is append-only across rounds, so ids are unique forever.
+
+## Micro-features (MM-01..14)
+
+| Id | Feature |
+|---|---|
+| MM-01 | Root-element identification + dialect detection (`<mapper>` = MyBatis, `<sqlMap>` = iBatis) |
+| MM-02 | `namespace` attribute parsing |
+| MM-03 | Statement collection (select/insert/update/delete + iBatis procedure/statement, databaseId, duplicate-id detection) |
+| MM-04 | `<sql id>` fragment collection |
+| MM-05 | `<include refid>` reference collection (local / qualified / dynamic) |
+| MM-06 | Dynamic-tag flattening (`<if>/<choose>/<where>/<set>/<trim>/<foreach>` → per-branch SQL variants, ≤32, else union fallback) |
+| MM-07 | Placeholder normalization (`#{}` → `?`, `${}` → `__BATIS_DYN__`, property-path collection) |
+| MM-08 | CDATA / entity handling (verbatim SQL reconstruction) |
+| MM-09 | Class-reference collection (parameterType/resultType, raw -- alias resolution is the consumer's job) |
+| MM-10 | ResultMap parsing (mappings, extends, discriminator, association/collection) |
+| MM-11 | iBatis dialect absorption (`<isNotEmpty>` etc., `#var#`/`$var$`, prepend) |
+| MM-12 | Byte-span fidelity (every `Spanned` value slices back to its source text) |
+| MM-13 | Hostile-input resilience (broken/truncated XML → partial result + diagnostics, never a panic) |
+| MM-14 | Encoding detection (BOM / declared label / heuristics; reality wins over declaration) |
 
 ## Conventions
 
