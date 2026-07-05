@@ -15,3 +15,4 @@ semver_check = true
 [[package]]
 name = "batis-xml-wasm"
 release = false
+publish = false  # npm-only crate; Cargo.toml also says publish = false -- keep release-plz consistent
