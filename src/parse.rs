@@ -51,8 +51,22 @@ pub(crate) const OVERSIZE_LIMIT: usize = 10 * 1024 * 1024;
 /// (`ParseResult::encoding`'s doc comment): every span is relative to
 /// the BOM-stripped content, never the original (possibly BOM-prefixed)
 /// input.
+///
+/// A21 (cold code review): a *single* `strip_prefix` only removes one
+/// BOM. quick-xml's own BOM skip is also one-shot (verified directly
+/// against its reader: a second leading U+FEFF comes back as a leftover
+/// `Text` event, not silently consumed), so with two or more leading
+/// BOMs, one `strip_prefix` call left the second BOM in `source` while
+/// quick-xml's reader (fed that same once-stripped string) skipped *its*
+/// leading BOM too -- the same 3-byte skew A19 fixed for one BOM,
+/// reappearing for the second. Stripping in a loop until none remain
+/// keeps this function's indexing and quick-xml's positions agreeing
+/// regardless of how many redundant BOMs a caller's input carries.
 pub(crate) fn parse_str(source: &str) -> ParseResult {
-    let source = source.strip_prefix('\u{FEFF}').unwrap_or(source);
+    let mut source = source;
+    while let Some(rest) = source.strip_prefix('\u{FEFF}') {
+        source = rest;
+    }
     if source.len() > OVERSIZE_LIMIT {
         return ParseResult {
             dialect: Dialect::Unknown,
@@ -1878,6 +1892,137 @@ mod tests {
             stmt.id.as_ref().unwrap().span,
             expected_mapper.statements[0].id.as_ref().unwrap().span
         );
+    }
+
+    /// Shared assertion body for A21's double/triple leading BOM tests:
+    /// `parse_str` on `with_boms` must agree byte-for-byte with a plain
+    /// parse of `without_bom`, and `crate::parse`/`crate::parse_bytes` on
+    /// the *same* `with_boms` content must produce byte-identical JSON --
+    /// the two public entry points must never diverge on how many BOMs
+    /// they strip.
+    fn assert_bom_stripping_agrees(with_boms: &str, without_bom: &str) {
+        let result = parse_str(with_boms);
+        assert_eq!(result.dialect, Dialect::Mybatis);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.namespace.as_ref().unwrap().value, "x");
+        assert_eq!(mapper.statements.len(), 1);
+        let stmt = &mapper.statements[0];
+        assert_eq!(stmt.id.as_ref().unwrap().value, "a");
+        let SqlText::Variants(variants) = &stmt.sql else {
+            panic!("expected a single unconditional variant")
+        };
+        assert_eq!(variants[0].text.text, "SELECT 1");
+
+        let without_bom_result = parse_str(without_bom);
+        let expected_mapper = without_bom_result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.namespace.as_ref().unwrap().span,
+            expected_mapper.namespace.as_ref().unwrap().span
+        );
+        assert_eq!(stmt.span, expected_mapper.statements[0].span);
+        assert_eq!(
+            stmt.id.as_ref().unwrap().span,
+            expected_mapper.statements[0].id.as_ref().unwrap().span
+        );
+
+        // A21: parse(&str) and parse_bytes(&[u8]) must agree, not just on
+        // dialect/id/text, but byte-for-byte in their full JSON output --
+        // the two entry points must strip the same number of BOMs.
+        let str_result = crate::parse(with_boms);
+        let bytes_result = crate::parse_bytes(with_boms.as_bytes());
+        let str_json = serde_json::to_string_pretty(&str_result).expect("ParseResult serializes");
+        let bytes_json =
+            serde_json::to_string_pretty(&bytes_result).expect("ParseResult serializes");
+        assert_eq!(
+            str_json, bytes_json,
+            "parse() and parse_bytes() must agree byte-for-byte on the same BOM-laden content"
+        );
+    }
+
+    #[test]
+    fn a21_double_leading_bom_is_fully_stripped() {
+        // A21 (cold code review): a single `strip_prefix` call only
+        // removes one BOM, leaving a second one for quick-xml to skip on
+        // its own -- reintroducing the exact 3-byte span skew A19 fixed
+        // for a single BOM. This must go through both public entry points
+        // identically.
+        let with_boms =
+            "\u{FEFF}\u{FEFF}<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        let without_bom = "<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        assert_bom_stripping_agrees(with_boms, without_bom);
+    }
+
+    #[test]
+    fn a21_triple_leading_bom_is_fully_stripped() {
+        // Same as the double-BOM case, but with three leading BOMs, to
+        // confirm the loop (not just a second manual strip) is correct.
+        let with_boms = "\u{FEFF}\u{FEFF}\u{FEFF}<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        let without_bom = "<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        assert_bom_stripping_agrees(with_boms, without_bom);
+    }
+
+    #[test]
+    fn a21_mid_text_bom_is_preserved_verbatim() {
+        // Regression guard: A21's fix only strips *leading* BOMs (via
+        // `strip_prefix` in a loop). A U+FEFF appearing mid-document --
+        // e.g. accidentally pasted into SQL text -- is ordinary content,
+        // not a byte-order mark, and must survive untouched. This must
+        // not be conflated with the leading-BOM-stripping loop above.
+        let source = "<mapper namespace=\"x\"><select id=\"a\">SELECT '\u{FEFF}' FROM dual</select></mapper>";
+        let result = parse_str(source);
+        assert_eq!(result.dialect, Dialect::Mybatis);
+        let mapper = result.mapper.expect("mapper root");
+        let stmt = &mapper.statements[0];
+        let SqlText::Variants(variants) = &stmt.sql else {
+            panic!("expected a single unconditional variant")
+        };
+        assert!(
+            variants[0].text.text.contains('\u{FEFF}'),
+            "mid-text BOM must be preserved verbatim, got: {:?}",
+            variants[0].text.text
+        );
+        assert_eq!(variants[0].text.text, "SELECT '\u{FEFF}' FROM dual");
+    }
+
+    #[test]
+    fn a21_parse_bytes_strips_n_raw_utf8_boms() {
+        // A21: `encoding::decode` strips exactly one raw UTF-8 BOM
+        // (`[0xEF, 0xBB, 0xBF]`) before handing off to `parse_str`, which
+        // now loops to strip any further leading BOMs itself. Exercise
+        // `crate::parse_bytes` directly with N *raw byte* BOMs (as
+        // opposed to pre-decoded `\u{FEFF}` chars in a `&str`) for
+        // N = 1, 2, 3 to confirm the two-stage stripping composes
+        // correctly regardless of which layer strips how many.
+        const UTF8_BOM_BYTES: [u8; 3] = [0xEF, 0xBB, 0xBF];
+        let body = b"<mapper namespace=\"x\"><select id=\"a\">SELECT 1</select></mapper>";
+        let expected = crate::parse_bytes(body);
+        let expected_mapper = expected.mapper.expect("mapper root");
+
+        for n in 1..=3 {
+            let mut bytes = Vec::new();
+            for _ in 0..n {
+                bytes.extend_from_slice(&UTF8_BOM_BYTES);
+            }
+            bytes.extend_from_slice(body);
+            let result = crate::parse_bytes(&bytes);
+            assert_eq!(result.dialect, Dialect::Mybatis, "n={n}");
+            let mapper = result
+                .mapper
+                .unwrap_or_else(|| panic!("mapper root, n={n}"));
+            assert_eq!(mapper.namespace.as_ref().unwrap().value, "x", "n={n}");
+            assert_eq!(
+                mapper.namespace.as_ref().unwrap().span,
+                expected_mapper.namespace.as_ref().unwrap().span,
+                "n={n}"
+            );
+            let stmt = &mapper.statements[0];
+            assert_eq!(stmt.id.as_ref().unwrap().value, "a", "n={n}");
+            assert_eq!(stmt.span, expected_mapper.statements[0].span, "n={n}");
+            let SqlText::Variants(variants) = &stmt.sql else {
+                panic!("expected a single unconditional variant, n={n}")
+            };
+            assert_eq!(variants[0].text.text, "SELECT 1", "n={n}");
+        }
     }
 
     #[test]
