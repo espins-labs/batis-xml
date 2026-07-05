@@ -299,6 +299,10 @@ fn check_sql_text(source: &str, sql: &SqlText) {
         SqlText::Union { text, .. } => {
             check_span_map_strictly_increasing(&text.span_map, "union span_map");
         }
+        // SqlText is #[non_exhaustive]: this is an external (tests/) crate
+        // with respect to the lib, so a future representation must not
+        // break this invariant check at compile time.
+        _ => {}
     }
 }
 

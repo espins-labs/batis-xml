@@ -6,7 +6,7 @@
  */
 
 /**
- * Additions only; removal/renaming is breaking.
+ * Additions only; removal/renaming is breaking. `#[non_exhaustive]` because new codes may appear within v1 itself (see `schema/README.md`) -- an exhaustive `match` outside this crate must add a wildcard arm, which is exactly the forward-compat behavior consumers need (an unrecognized code is not an error). `Other` covers the equivalent case for *deserialization* (this build reading JSON produced by a newer version).
  *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "DiagCode".
@@ -26,13 +26,18 @@ export type DiagCode =
   | "duplicate_attribute"
   | "invalid_entity"
   | "unterminated_placeholder"
-  | "nesting_limit_exceeded";
+  | "nesting_limit_exceeded"
+  | "other";
 /**
+ * Closed set: an exhaustive `match` is a consumer feature (there's no forward-compat concern the way there is for `DiagCode`/`SqlText`, since `Unknown` already covers "neither of the two known dialects"). Adding a third dialect would be a v2.
+ *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "Dialect".
  */
 export type Dialect = "mybatis" | "ibatis" | "unknown";
 /**
+ * Closed set: an exhaustive `match` is a consumer feature. `Dynamic` already covers "can't be resolved statically" -- there's no third kind of refid target. Adding a variant here would be a v2.
+ *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "IncludeTarget".
  */
@@ -51,6 +56,8 @@ export type IncludeTarget =
 /**
  * Result of dynamic-tag flattening (MM-06). Branch combination cap N=32 — total candidates per statement, computed as the cartesian product of tag branches.
  *
+ * `#[non_exhaustive]`: a third fallback representation is plausible future work, and consumers matching exhaustively today must not break at compile time if one's added.
+ *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "SqlText".
  */
@@ -66,6 +73,8 @@ export type SqlText =
       };
     };
 /**
+ * Closed set: an exhaustive `match` is a consumer feature. `Generic` already covers "some other statement-like tag with no CRUD-verb equivalent" -- a new MyBatis/iBatis statement-like tag would be recognized by adding to `Generic`'s callers, not by growing this enum. Adding a variant here would be a v2.
+ *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "StatementKind".
  */

@@ -80,7 +80,7 @@
       }
     },
     "DiagCode": {
-      "description": "Additions only; removal/renaming is breaking.",
+      "description": "Additions only; removal/renaming is breaking. `#[non_exhaustive]` because new codes may appear within v1 itself (see `schema/README.md`) -- an exhaustive `match` outside this crate must add a wildcard arm, which is exactly the forward-compat behavior consumers need (an unrecognized code is not an error). `Other` covers the equivalent case for *deserialization* (this build reading JSON produced by a newer version).",
       "oneOf": [
         {
           "type": "string",
@@ -123,6 +123,13 @@
           "enum": [
             "nesting_limit_exceeded"
           ]
+        },
+        {
+          "description": "Forward-compat deserialization fallback: any code string this build doesn't recognize (e.g. JSON produced by a newer batis-xml version) lands here instead of failing to deserialize. Never produced by this crate's own parser -- hidden from docs since it's a deserialization mechanism, not a diagnostic you'd match on intentionally. Cold code-review contract audit, 2026-07-05.",
+          "type": "string",
+          "enum": [
+            "other"
+          ]
         }
       ]
     },
@@ -152,6 +159,7 @@
       }
     },
     "Dialect": {
+      "description": "Closed set: an exhaustive `match` is a consumer feature (there's no forward-compat concern the way there is for `DiagCode`/`SqlText`, since `Unknown` already covers \"neither of the two known dialects\"). Adding a third dialect would be a v2.",
       "type": "string",
       "enum": [
         "mybatis",
@@ -175,6 +183,7 @@
       }
     },
     "IncludeTarget": {
+      "description": "Closed set: an exhaustive `match` is a consumer feature. `Dynamic` already covers \"can't be resolved statically\" -- there's no third kind of refid target. Adding a variant here would be a v2.",
       "oneOf": [
         {
           "type": "object",
@@ -426,7 +435,7 @@
       }
     },
     "SqlText": {
-      "description": "Result of dynamic-tag flattening (MM-06). Branch combination cap N=32 — total candidates per statement, computed as the cartesian product of tag branches.",
+      "description": "Result of dynamic-tag flattening (MM-06). Branch combination cap N=32 — total candidates per statement, computed as the cartesian product of tag branches.\n\n`#[non_exhaustive]`: a third fallback representation is plausible future work, and consumers matching exhaustively today must not break at compile time if one's added.",
       "oneOf": [
         {
           "type": "object",
@@ -587,6 +596,7 @@
       }
     },
     "StatementKind": {
+      "description": "Closed set: an exhaustive `match` is a consumer feature. `Generic` already covers \"some other statement-like tag with no CRUD-verb equivalent\" -- a new MyBatis/iBatis statement-like tag would be recognized by adding to `Generic`'s callers, not by growing this enum. Adding a variant here would be a v2.",
       "oneOf": [
         {
           "type": "string",

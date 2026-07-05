@@ -167,6 +167,9 @@ fn main() {
                     collapse_ws(&text.text)
                 );
             }
+            // SqlText is #[non_exhaustive]: a future representation must
+            // not break existing consumers at compile time.
+            _ => println!("  [unrecognized SqlText representation]"),
         }
     }
 

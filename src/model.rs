@@ -1,8 +1,17 @@
 //! Output model — the serde serialization of these types IS the published
-//! schema (`schema/batis-xml.v1.json`, to be pinned by snapshot tests).
+//! schema (`schema/batis-xml.v1.json`, pinned by a snapshot test).
 //!
 //! Spec: spec-mybatis-mapper.md "Public API (final)". Removing or renaming
-//! fields is breaking; additions are non-breaking (including `DiagCode`).
+//! a field, or removing/renaming an enum variant, is always breaking.
+//! Additions are **additive at the JSON-representation level** (schema
+//! v1 stays valid; old consumers keep working against new output) --
+//! this is *not* the same as "non-breaking" at the Rust type level: a
+//! struct field addition or enum variant addition is a 0.x minor-semver
+//! bump, since an exhaustive `match` outside this crate must be updated
+//! (for the `#[non_exhaustive]` enums below, the compiler enforces this
+//! with a wildcard-arm requirement; plain structs stay constructible by
+//! downstream test harnesses, so they don't get `#[non_exhaustive]`).
+//! Cold code-review contract audit, code-atlas 8e4ed9a, 2026-07-05.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +39,10 @@ pub struct Spanned<T> {
     pub span: ByteSpan,
 }
 
+/// Closed set: an exhaustive `match` is a consumer feature (there's no
+/// forward-compat concern the way there is for `DiagCode`/`SqlText`,
+/// since `Unknown` already covers "neither of the two known dialects").
+/// Adding a third dialect would be a v2.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,10 +71,17 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Additions only; removal/renaming is breaking.
+/// Additions only; removal/renaming is breaking. `#[non_exhaustive]`
+/// because new codes may appear within v1 itself (see `schema/README.md`)
+/// -- an exhaustive `match` outside this crate must add a wildcard arm,
+/// which is exactly the forward-compat behavior consumers need (an
+/// unrecognized code is not an error). `Other` covers the equivalent case
+/// for *deserialization* (this build reading JSON produced by a newer
+/// version).
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DiagCode {
     EncodingUndetectable,
     EncodingMismatch,
@@ -85,6 +105,15 @@ pub enum DiagCode {
     /// subtree is treated as opaque (no text/mapping contribution) rather
     /// than risk a stack overflow. Cold code review B2/B3, 2026-07-05.
     NestingLimitExceeded,
+    /// Forward-compat deserialization fallback: any code string this build
+    /// doesn't recognize (e.g. JSON produced by a newer batis-xml version)
+    /// lands here instead of failing to deserialize. Never produced by
+    /// this crate's own parser -- hidden from docs since it's a
+    /// deserialization mechanism, not a diagnostic you'd match on
+    /// intentionally. Cold code-review contract audit, 2026-07-05.
+    #[doc(hidden)]
+    #[serde(other)]
+    Other,
 }
 
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -98,6 +127,11 @@ pub struct Mapper {
     pub result_maps: Vec<ResultMap>,
 }
 
+/// Closed set: an exhaustive `match` is a consumer feature. `Generic`
+/// already covers "some other statement-like tag with no CRUD-verb
+/// equivalent" -- a new MyBatis/iBatis statement-like tag would be
+/// recognized by adding to `Generic`'s callers, not by growing this enum.
+/// Adding a variant here would be a v2.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -141,9 +175,14 @@ pub struct Statement {
 /// Result of dynamic-tag flattening (MM-06).
 /// Branch combination cap N=32 — total candidates per statement, computed
 /// as the cartesian product of tag branches.
+///
+/// `#[non_exhaustive]`: a third fallback representation is plausible
+/// future work, and consumers matching exhaustively today must not break
+/// at compile time if one's added.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SqlText {
     Variants(Vec<SqlVariant>),
     /// Over-cap fallback (accompanied by a `BranchLimitExceeded` diagnostic).
@@ -191,6 +230,9 @@ pub struct IncludeRef {
     pub target: IncludeTarget,
 }
 
+/// Closed set: an exhaustive `match` is a consumer feature. `Dynamic`
+/// already covers "can't be resolved statically" -- there's no third kind
+/// of refid target. Adding a variant here would be a v2.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -228,4 +270,28 @@ pub struct ResultMap {
 pub struct ColumnMapping {
     pub column: Option<String>,
     pub property: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A3 (cold code review): DiagCode's #[serde(other)] Other variant is
+    // the forward-compat escape hatch for deserializing JSON produced by a
+    // future version with a code this build doesn't know about yet.
+
+    #[test]
+    fn diag_code_deserializes_unknown_string_to_other() {
+        let json =
+            r#"{"code":"some_future_code_this_build_does_not_know","span":null,"message":"x"}"#;
+        let d: Diagnostic = serde_json::from_str(json).expect("deserializes, doesn't fail");
+        assert_eq!(d.code, DiagCode::Other);
+    }
+
+    #[test]
+    fn diag_code_still_deserializes_known_codes_normally() {
+        let json = r#"{"code":"unclosed_tag","span":null,"message":"x"}"#;
+        let d: Diagnostic = serde_json::from_str(json).expect("deserializes");
+        assert_eq!(d.code, DiagCode::UnclosedTag);
+    }
 }

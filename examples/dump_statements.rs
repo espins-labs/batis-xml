@@ -74,6 +74,10 @@ fn main() {
                         text.text.trim()
                     );
                 }
+                // SqlText is #[non_exhaustive]: a future representation
+                // (e.g. a third fallback shape) must not break existing
+                // consumers at compile time.
+                _ => println!("    [unrecognized SqlText representation]"),
             }
         }
 
