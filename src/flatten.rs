@@ -638,6 +638,21 @@ fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, 
     let suffix = read_attr(source, span, b"suffix", ctx);
     let prefix_overrides = split_overrides(&read_attr(source, span, b"prefixOverrides", ctx));
     let suffix_overrides = split_overrides(&read_attr(source, span, b"suffixOverrides", ctx));
+    // B29 (cold code review, minor, known divergence -- no behavior change):
+    // `read_attr` collapses "attribute absent" and `prefix=""`/`suffix=""`
+    // (attribute present, empty value) into the same empty `String`, so
+    // both are treated identically here (no separator added). Upstream
+    // MyBatis's `TrimSqlNode` distinguishes them: it checks `prefix !=
+    // null` (Java `null`, i.e. attribute *absent*), not "prefix is
+    // non-empty" -- `applyPrefix` unconditionally does
+    // `sql.insert(0, " "); sql.insert(0, prefix)` whenever the attribute
+    // was present at all, so an explicit `prefix=""` in real MyBatis
+    // inserts a single leading space upstream that this crate does not
+    // reproduce. Accepted as-is: this crate has no way to distinguish
+    // "attribute absent" from "attribute present with an empty value" once
+    // `scan_attributes` has already collapsed both to `""` (and doing so
+    // would only matter for the vanishingly rare mapper that writes
+    // `prefix=""` explicitly instead of omitting the attribute).
     let prefix_with_sep = if prefix.is_empty() {
         String::new()
     } else {
