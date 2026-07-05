@@ -468,7 +468,31 @@ fn build_mapper(
                         ));
                         break;
                     }
-                    SkipOutcome::Closed => {}
+                    SkipOutcome::Closed => {
+                        // A14 (cold code review, major): every unrecognized
+                        // statement-level element used to vanish here
+                        // identically, whether deliberately out of scope
+                        // (<cache>) or a genuine typo (<slect> for
+                        // <select>) -- the latter silently drops the whole
+                        // statement with zero diagnostics. Flag anything
+                        // not in the known-ignorable list.
+                        let name_str = String::from_utf8_lossy(local_name);
+                        if !is_known_ignorable_element(&name_str) {
+                            diagnostics.push(Diagnostic {
+                                code: DiagCode::UnknownElement,
+                                span: Some(ByteSpan {
+                                    start: child_start as u32,
+                                    end: reader.buffer_position() as u32,
+                                }),
+                                message: format!(
+                                    "unrecognized statement-level element <{name_str}> -- \
+                                     not a known statement/fragment/resultMap tag, and not \
+                                     one of this crate's known-ignorable elements; ignored \
+                                     (possible typo?)"
+                                ),
+                            });
+                        }
+                    }
                 }
             }
             Ok(Event::Empty(tag)) => {
@@ -507,6 +531,26 @@ fn build_mapper(
                     diagnostics.append(&mut diags);
                     if let Some(result_map) = result_map {
                         result_maps.push(result_map);
+                    }
+                } else {
+                    // A14: same unknown-element check as the non-empty
+                    // (Event::Start) case above, for a self-closed
+                    // unrecognized statement-level element.
+                    let name_str = String::from_utf8_lossy(local_name);
+                    if !is_known_ignorable_element(&name_str) {
+                        diagnostics.push(Diagnostic {
+                            code: DiagCode::UnknownElement,
+                            span: Some(ByteSpan {
+                                start: child_start as u32,
+                                end: tag_end as u32,
+                            }),
+                            message: format!(
+                                "unrecognized statement-level element <{name_str}> -- \
+                                 not a known statement/fragment/resultMap tag, and not \
+                                 one of this crate's known-ignorable elements; ignored \
+                                 (possible typo?)"
+                            ),
+                        });
                     }
                 }
             }
@@ -563,6 +607,30 @@ fn statement_kind(local_name: &[u8]) -> Option<StatementKind> {
         b"statement" => Some(StatementKind::Generic),
         _ => None,
     }
+}
+
+/// Elements with no corresponding model field that this crate deliberately
+/// (not accidentally) skips without a diagnostic, at either statement level
+/// (a direct child of `<mapper>`/`<sqlMap>` that isn't a statement/`<sql>`/
+/// `<resultMap>`) or dynamic position (nested inside a statement/fragment
+/// body, reached via [`crate::flatten::expand_transparent`]'s catch-all).
+///
+/// A14 (cold code review, major): before this list existed, *every*
+/// unrecognized element silently vanished the same way, whether it was a
+/// deliberately-out-of-scope one like `<cache>` or a genuine typo like
+/// `<slect>`/`<iff>` -- there was no way to tell "this crate doesn't model
+/// caching" apart from "your mapper XML has a bug". Anything NOT in this
+/// list now gets a `DiagCode::UnknownElement` diagnostic instead of
+/// silently doing nothing.
+///
+/// MyBatis: `cache`, `cache-ref`, `parameterMap` (MM-11: no model field).
+/// iBatis: `cacheModel`, `typeAlias`, `parameterMap` (same tag name,
+/// deliberately out of scope in both dialects).
+pub(crate) fn is_known_ignorable_element(local_name: &str) -> bool {
+    matches!(
+        local_name,
+        "cache" | "cache-ref" | "parameterMap" | "cacheModel" | "typeAlias"
+    )
 }
 
 /// A single variant with empty text and no conditions -- the correct
@@ -4107,6 +4175,95 @@ mod tests {
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.statements.len(), 1);
         assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "a");
+    }
+
+    #[test]
+    fn a14_known_ignorable_cache_element_is_not_diagnosed() {
+        // Cold code review A14: <cache> (MyBatis, no model field -- same
+        // class of deliberate gap as <parameterMap>) must stay silent, not
+        // get an UnknownElement diagnostic.
+        let source = r#"<mapper namespace="x">
+            <cache eviction="LRU"/>
+            <select id="a">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::UnknownElement));
+    }
+
+    #[test]
+    fn a14_statement_level_typo_is_diagnosed_and_dropped() {
+        // Cold code review A14 (major): a typo'd statement tag like
+        // <slect> (for <select>) used to drop the whole statement with
+        // zero diagnostics -- indistinguishable from a deliberately
+        // out-of-scope element like <cache>. Must now get an
+        // UnknownElement diagnostic (the statement itself is still
+        // dropped -- there's no model slot to recover it into).
+        let source = r#"<mapper namespace="x">
+            <slect id="typo">SELECT 1</slect>
+            <select id="real">SELECT 2</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "real");
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(unknown.len(), 1);
+        assert!(unknown[0].message.contains("slect"));
+    }
+
+    #[test]
+    fn a14_self_closed_statement_level_typo_is_diagnosed() {
+        // Same as a14_statement_level_typo_is_diagnosed_and_dropped but
+        // for the Event::Empty (self-closed) parse path specifically --
+        // a separate code path from the non-empty Event::Start one.
+        let source = r#"<mapper namespace="x">
+            <slect id="typo"/>
+            <select id="real">SELECT 1</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(unknown.len(), 1);
+        assert!(unknown[0].message.contains("slect"));
+    }
+
+    #[test]
+    fn a14_dynamic_position_typo_is_diagnosed_but_still_folded_transparently() {
+        // Cold code review A14 (major): a typo'd dynamic tag like <iff>
+        // (for <if>) used to fold its content in unconditionally with no
+        // diagnostic at all -- must now get an UnknownElement diagnostic,
+        // while *keeping* the transparent-fold recovery (the body text is
+        // still present, not dropped, since that's the safer degrade for
+        // a wrapper-shaped typo).
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1 <iff test="x != null">AND x = 1</iff></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1 AND x = 1");
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(unknown.len(), 1);
+        assert!(unknown[0].message.contains("iff"));
     }
 
     // --- span field (Statement/SqlFragment/ResultMap): opening-tag start

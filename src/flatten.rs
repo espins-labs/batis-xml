@@ -360,8 +360,29 @@ fn flatten_segments_inner(
                     acc = try_combine(&acc, &local)?;
                 }
                 _ => {
-                    // Transparent passthrough — anything with no special
-                    // semantics at all.
+                    // A14 (cold code review, major): transparent
+                    // passthrough for anything with no special semantics
+                    // -- but flag it first unless it's a known-ignorable
+                    // element (see is_known_ignorable_element's doc
+                    // comment). Before this, a genuine typo like <iff> for
+                    // <if> folded its content in unconditionally with no
+                    // diagnostic at all, identical to a deliberately
+                    // out-of-scope tag -- the recovery (still folding the
+                    // content in transparently, so a typo'd wrapper
+                    // doesn't also lose its body text) is deliberate and
+                    // kept; only the silence is fixed.
+                    if !crate::parse::is_known_ignorable_element(name) {
+                        ctx.diagnostics.push(Diagnostic {
+                            code: DiagCode::UnknownElement,
+                            span: Some(*span),
+                            message: format!(
+                                "unrecognized element <{name}> in dynamic position -- not a \
+                                 known MyBatis/iBatis dynamic tag, and not one of this \
+                                 crate's known-ignorable elements; its content is still \
+                                 folded in transparently (possible typo?)"
+                            ),
+                        });
+                    }
                     let local = expand_transparent(source, *span, ctx)?;
                     acc = try_combine(&acc, &local)?;
                 }
@@ -935,6 +956,15 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
                 }
             }
             RunItem::Tag { span, .. } => {
+                // Note: unlike flatten_segments_inner's catch-all, this one
+                // is NOT "unrecognized element" -- union_walk deliberately
+                // folds every wrapper tag (<if>, <where>, <trim>, ...)
+                // transparently too, since the union representation never
+                // tries to encode branch structure at all (that's the
+                // whole point of the BranchLimitExceeded fallback). A14's
+                // unknown-element diagnosis only applies to the normal
+                // (non-union) path's catch-all, where it's a genuine
+                // "nothing matched" case.
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
                 ctx.diagnostics.append(&mut d);
                 pieces.extend(union_walk(source, &inner_segments, ctx));
