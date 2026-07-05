@@ -1302,7 +1302,18 @@ pub(crate) fn scan_attributes(bytes: &[u8], tag_start: usize, tag_end: usize) ->
         }
 
         let name_start = i;
-        while i < tag_end && bytes[i] != b'=' && !bytes[i].is_ascii_whitespace() {
+        // Cold code review B6: must also stop at `>`/`/` (the tag's own
+        // end), not just `=`/whitespace -- otherwise a bare valueless
+        // attribute immediately followed by `>` (e.g. `<if foo>x AND
+        // test = "1"</if>`) reads straight through the opening tag's `>`
+        // into the body text, fabricating a "test" attribute from SQL
+        // that was never inside the tag at all.
+        while i < tag_end
+            && bytes[i] != b'='
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
+        {
             i += 1;
         }
         let name_end = i;
@@ -2985,6 +2996,47 @@ mod tests {
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.namespace.as_ref().unwrap().value, "x");
+    }
+
+    // --- B6 (cold code review): a bare valueless attribute immediately
+    // followed by the tag's own `>` used to make scan_attributes' name-scan
+    // loop read straight through that `>` into the body text, fabricating
+    // an attribute from SQL that was never inside the tag at all.
+
+    #[test]
+    fn scan_attributes_stops_at_tag_close_even_with_trailing_bare_attribute() {
+        let source = r#"<if foo>x AND test = "1"</if>"#;
+        // Deliberately the FULL element span (opening tag through closing
+        // tag), matching how flatten.rs/parse.rs actually call
+        // scan_attributes for a DynamicTag's span -- a `tag_end` bounded
+        // to just the opening tag's own `>` would mask the bug (the outer
+        // `i < tag_end` check would stop the scan either way).
+        let tag_end = source.len();
+        let attrs = scan_attributes(source.as_bytes(), 0, tag_end);
+        assert!(
+            attrs.is_empty(),
+            "no real attributes in <if foo>, but scan found {}",
+            attrs.len()
+        );
+    }
+
+    #[test]
+    fn bare_attribute_before_tag_close_does_not_fabricate_condition_from_body() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<if foo>x AND test = "1"</if></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        let present = vs
+            .iter()
+            .find(|v| v.text.text.contains("AND test"))
+            .expect("a present-branch variant containing the body text exists");
+        // The <if>'s own `test` attribute is genuinely absent (`foo` is a
+        // bare, unrelated attribute) -- its condition must be empty, never
+        // "1" fabricated from the body's `test = "1"` text.
+        assert_eq!(present.conditions, vec!["".to_string()]);
     }
 
     #[test]
