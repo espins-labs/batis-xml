@@ -1,0 +1,80 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 166,
+          "end": 364
+        },
+        "id": {
+          "value": "widgetDAO.selectWithLiteralDollar",
+          "span": {
+            "start": 178,
+            "end": 211
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, '$' AS currency_symbol\n    FROM demo_widget\n    ORDER BY __BATIS_DYN__ ASC\n  ",
+                "span_map": [
+                  [
+                    0,
+                    255
+                  ],
+                  [
+                    25,
+                    281
+                  ],
+                  [
+                    93,
+                    348
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 229,
+            "end": 232
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 247,
+            "end": 253
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "sortColumn",
+            "span": {
+              "start": 337,
+              "end": 347
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

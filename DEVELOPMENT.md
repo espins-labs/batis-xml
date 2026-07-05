@@ -121,6 +121,32 @@ than fixed now (cold code review, section C):
   and never approaches the 10-second range typically associated with a
   request-handling timeout.
 
+- **`<trim>` doesn't replicate MyBatis's own whole-body `.trim()` step**
+  (cold code review B41, minor, whitespace-only, span-preserving).
+  Upstream MyBatis's `TrimSqlNode`/`FilteredDynamicContext.applyAll()`
+  always calls Java's `String.trim()` on the *entire* accumulated body
+  text first -- unconditionally, whether or not `prefixOverrides`/
+  `suffixOverrides` end up matching anything -- before checking length
+  and applying `prefix`/`suffix`. This crate's `expand_trim` (flatten.rs)
+  only strips leading/trailing whitespace as *part of* an override match
+  (`leading_override_strip_len`/`trailing_override_strip_len` skip
+  whitespace before checking the candidate token, so a matched override
+  already consumes any whitespace ahead of it correctly) -- but when
+  *no* override matches, or none is configured at all, surrounding
+  whitespace inside the `<trim>` body is left exactly as authored. For
+  example, `<trim prefix="(" suffix=")">\n  widget_name\n</trim>`
+  becomes `"( \n  widget_name\n )"` here, not MyBatis's tightly-wrapped
+  `"(widget_name)"`. Never changes SQL keyword/identifier content and
+  never corrupts a span (every offset still points at real source
+  bytes; nothing here fabricates or coarsens one) -- purely extra
+  whitespace bytes surviving where upstream would have dropped them.
+  Accepted as a known 0.1 gap rather than a blocking fix; deferred to
+  0.1.1+ (a real fix means threading a whole-body trim through
+  `with_prefix`/`with_suffix_strip`'s span-preserving strip machinery,
+  which is more surgery than this divergence's practical impact -- most
+  real mapper SQL doesn't rely on exact inter-token whitespace --
+  currently justifies).
+
 ## Pre-publish checklist
 
 - [x] Generate `schema/batis-xml.v1.json` and pin it with a snapshot test
