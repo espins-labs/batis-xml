@@ -868,7 +868,14 @@ fn leading_and_or_strip_len(text: &str) -> usize {
     }
     let rest = &text[i..];
     for word in ["and", "or"] {
-        if rest.len() >= word.len() && rest[..word.len()].eq_ignore_ascii_case(word) {
+        // Byte-slice comparison: `rest[..word.len()]` (a &str index) panics
+        // if that byte offset isn't a char boundary (e.g. a 3-byte CJK or
+        // 4-byte emoji character right after the whitespace). Byte slices
+        // have no such requirement, and since `word` is all-ASCII the
+        // comparison semantics are identical either way.
+        if rest.len() >= word.len()
+            && rest.as_bytes()[..word.len()].eq_ignore_ascii_case(word.as_bytes())
+        {
             let after = rest.as_bytes().get(word.len());
             if after.is_some_and(|b| b.is_ascii_whitespace()) {
                 let mut j = i + word.len();
@@ -914,7 +921,11 @@ fn leading_override_strip_len(text: &str, overrides: &[String]) -> usize {
     }
     let rest = &text[i..];
     for candidate in overrides {
-        if rest.len() >= candidate.len() && rest[..candidate.len()].eq_ignore_ascii_case(candidate)
+        // See leading_and_or_strip_len's comment: byte-slice comparison
+        // never char-boundary-panics, and a byte-identical match
+        // guarantees the boundary is valid anyway (candidate is a &str).
+        if rest.len() >= candidate.len()
+            && rest.as_bytes()[..candidate.len()].eq_ignore_ascii_case(candidate.as_bytes())
         {
             return i + candidate.len();
         }
@@ -932,8 +943,12 @@ fn trailing_override_strip_len(text: &str, overrides: &[String]) -> usize {
     }
     let before_ws = &text[..text.len() - ws];
     for candidate in overrides {
+        // See leading_and_or_strip_len's comment: byte-slice comparison
+        // never char-boundary-panics, and a byte-identical match
+        // guarantees the boundary is valid anyway (candidate is a &str).
         if before_ws.len() >= candidate.len()
-            && before_ws[before_ws.len() - candidate.len()..].eq_ignore_ascii_case(candidate)
+            && before_ws.as_bytes()[before_ws.len() - candidate.len()..]
+                .eq_ignore_ascii_case(candidate.as_bytes())
         {
             return ws + candidate.len();
         }

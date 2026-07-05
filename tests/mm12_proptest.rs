@@ -62,9 +62,39 @@ fn condition() -> impl Strategy<Value = String> {
     identifier().prop_map(|id| format!("{id} != null"))
 }
 
+/// A body whose *own* first/last character (before any wrapping) is a
+/// multibyte one -- 3-byte CJK or 4-byte emoji. This is exactly the
+/// position MM-06b's AND/OR- and override-strip probes look at
+/// (`leading_and_or_strip_len`, `leading_override_strip_len`,
+/// `trailing_override_strip_len`), so it's the generator's most valuable
+/// case for that class of bug (A1, cold code review): a char-boundary
+/// panic survived until then because this generator never produced a
+/// multibyte character at a wrapper's very edge.
+fn multibyte_edge_body() -> impl Strategy<Value = String> {
+    let edge = prop::sample::select(vec!["사", "용", "부", "그룹", "🎉", "😀", "🔥", "🚀"]);
+    (edge.clone(), identifier(), edge)
+        .prop_map(|(lead, prop, trail)| format!("{lead}col_{prop} = #{{{prop}}} {trail}"))
+}
+
+/// Wraps `body` in one of MM-06b's whitespace/comma/override-stripping
+/// tags -- `<where>`, `<set>`, `<trim prefixOverrides/suffixOverrides>` --
+/// the exact code path with the A1 bug class. The trim's own override
+/// lists include a multibyte candidate too, so the override-comparison
+/// itself (not just the plain AND/OR probe) gets exercised against
+/// multibyte text.
+fn where_set_trim_wrap(body: String) -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just(format!("<where>{body}</where>")),
+        Just(format!("<set>{body}</set>")),
+        Just(format!(
+            r#"<trim prefix="WHERE " prefixOverrides="AND |OR |사용여부" suffixOverrides=",|사용여부">{body}</trim>"#
+        )),
+    ]
+}
+
 /// Recursively builds a MyBatis-flavored dynamic-tag fragment, up to
-/// `max_depth` levels of `<if>`/`<choose>` nesting. `max_depth == 0` only
-/// produces leaf text (the recursion floor).
+/// `max_depth` levels of `<if>`/`<choose>`/`<where>`/`<set>`/`<trim>`
+/// nesting. `max_depth == 0` only produces leaf text (the recursion floor).
 fn mybatis_dynamic(max_depth: u32) -> BoxedStrategy<String> {
     let leaf = text_leaf().boxed();
     if max_depth == 0 {
@@ -88,6 +118,7 @@ fn mybatis_dynamic(max_depth: u32) -> BoxedStrategy<String> {
                 s
             }
         ),
+        1 => multibyte_edge_body().prop_flat_map(where_set_trim_wrap),
     ]
     .boxed()
 }

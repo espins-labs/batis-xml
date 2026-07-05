@@ -2353,6 +2353,78 @@ mod tests {
         assert_eq!(v.text.span_map[0].0, 0);
     }
 
+    // --- A1 (cold code review): leading_and_or_strip_len/
+    // leading_override_strip_len/trailing_override_strip_len sliced &str
+    // by byte length without a char-boundary check, panicking whenever a
+    // multibyte character (CJK, emoji, ...) sat at the probed position.
+    // Not mm_-prefixed: this is a cold-review fix, not a spec micro-feature.
+
+    #[test]
+    fn where_leading_and_or_strip_does_not_panic_on_leading_cjk() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where>사용여부 = 'Y'</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE 사용여부 = 'Y'");
+    }
+
+    #[test]
+    fn where_leading_and_or_strip_does_not_panic_on_leading_emoji() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where>🎉 flag = 1</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE 🎉 flag = 1");
+    }
+
+    #[test]
+    fn trim_prefix_overrides_leading_strip_does_not_panic_on_leading_cjk() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="WHERE " prefixOverrides="AND |OR ">사용여부 = 'Y'</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "WHERE 사용여부 = 'Y'");
+    }
+
+    #[test]
+    fn trim_prefix_overrides_leading_strip_does_not_panic_on_leading_emoji() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="WHERE " prefixOverrides="AND |OR ">🎉 = 1</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "WHERE 🎉 = 1");
+    }
+
+    #[test]
+    fn trim_suffix_overrides_trailing_strip_does_not_panic_on_trailing_cjk() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim suffixOverrides=",">a = 1사용여부</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "a = 1사용여부");
+    }
+
+    #[test]
+    fn trim_suffix_overrides_trailing_strip_does_not_panic_on_trailing_emoji() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim suffixOverrides=",">a = 1🎉</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "a = 1🎉");
+    }
+
     #[test]
     fn mm_06b_set_prepends_and_strips_trailing_comma() {
         let source = r#"<mapper namespace="x">
