@@ -275,6 +275,31 @@ pub(crate) fn normalize_merged(runs: &[TextRun], dialect: Dialect) -> Normalized
 
         if dialect == Dialect::Ibatis && (bytes[i] == b'#' || bytes[i] == b'$') {
             let delim = bytes[i];
+
+            // B18 (cold code review): iBatis's InlineParameterMapParser
+            // treats a doubled delimiter ("##"/"$$") as an escaped literal
+            // character, not the start of a placeholder -- notably `##`
+            // for SQL Server temp tables ("SELECT * FROM ##tmp").
+            if bytes.get(i + 1) == Some(&delim) {
+                flush_literal(
+                    &mut normalized,
+                    &mut span_map,
+                    &merged,
+                    &layout,
+                    copy_start,
+                    i,
+                );
+                normalized.push(delim as char);
+                let end_pos = i + 2;
+                copy_start = end_pos;
+                i = end_pos;
+                span_map.push((
+                    normalized.len() as u32,
+                    layout_for(&layout, end_pos).raw_offset(end_pos),
+                ));
+                continue;
+            }
+
             // Only commit to reading a legacy placeholder when its closing
             // delimiter actually exists in this segment — `#`/`$` are also
             // ordinary SQL/comment characters (monetary literals, etc.), and
@@ -524,6 +549,48 @@ mod tests {
         assert_eq!(result.text, format!("ORDER BY {DYN_MARKER}"));
         assert!(result.diagnostics.is_empty());
         assert_eq!(result.property_paths[0].value, "sortCol");
+    }
+
+    // B18 (cold code review): iBatis's InlineParameterMapParser treats a
+    // doubled delimiter as an escaped literal, not a placeholder --
+    // notably "##" for SQL Server temp tables. iBatis dialect only.
+
+    #[test]
+    fn b18_ibatis_doubled_hash_is_literal_hash() {
+        let decoded = "SELECT ##tmp";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
+        assert_eq!(result.text, "SELECT #tmp");
+        assert!(result.diagnostics.is_empty());
+        assert!(result.property_paths.is_empty());
+    }
+
+    #[test]
+    fn b18_ibatis_doubled_dollar_is_literal_dollar() {
+        let decoded = "price = $$100";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
+        assert_eq!(result.text, "price = $100");
+        assert!(result.diagnostics.is_empty());
+        assert!(result.property_paths.is_empty());
+    }
+
+    #[test]
+    fn b18_ibatis_doubled_hash_still_allows_a_real_placeholder_afterward() {
+        let decoded = "SELECT ##tmp WHERE id = #id#";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Ibatis);
+        assert_eq!(result.text, "SELECT #tmp WHERE id = ?");
+        assert_eq!(result.property_paths.len(), 1);
+        assert_eq!(result.property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn b18_doubled_hash_escape_does_not_apply_to_mybatis_dialect() {
+        // MyBatis has no legacy #..# form at all, so "##" is just two
+        // ordinary characters -- confirm the escape is iBatis-only and
+        // doesn't get triggered for MyBatis's own placeholder syntax.
+        let decoded = "SELECT ##tmp";
+        let result = normalize_segment(decoded, verbatim_span(decoded), Dialect::Mybatis);
+        assert_eq!(result.text, "SELECT ##tmp");
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
