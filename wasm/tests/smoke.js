@@ -201,6 +201,33 @@ if (typeof ArrayBuffer.prototype.transfer === "function") {
 assertThrowsTypeError(() => wasm.parse([1, 2, 3]), "parse", "a plain array");
 console.log("PASS: parse() still rejects a plain Array");
 
+// B48 (cold code review, minor): require_bytes's same-realm single-copy
+// fast path only applies when byteLength > 0 (that's what proves the
+// buffer hasn't been detached -- see require_bytes's doc comment); a
+// byteLength of 0 is ambiguous between "genuinely empty" and "detached",
+// so it must still fall through to the fallible copy_bytes_from path.
+// This must succeed (parse as empty input, no root element found) rather
+// than being mistaken for -- or throwing like -- a detached buffer.
+{
+  const emptySameRealm = new Uint8Array(0);
+  assert(
+    emptySameRealm instanceof Uint8Array,
+    "test setup: this array must be a genuine same-realm Uint8Array",
+  );
+  const emptyResult = JSON.parse(wasm.parse(emptySameRealm));
+  assert(
+    emptyResult.mapper === null,
+    `expected an empty same-realm Uint8Array to parse as empty input (no root element), got: ${JSON.stringify(emptyResult)}`,
+  );
+  assert(
+    Array.isArray(emptyResult.diagnostics) && emptyResult.diagnostics.length > 0,
+    "expected parse() to return normally (not throw) for an empty same-realm Uint8Array, with a diagnostic explaining the empty input",
+  );
+  console.log(
+    "PASS: parse() accepts a genuinely-empty same-realm Uint8Array as empty input, not an error",
+  );
+}
+
 function assert(cond, message) {
   if (!cond) {
     console.error(`FAIL: ${message}`);

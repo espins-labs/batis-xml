@@ -30,11 +30,36 @@ fn require_bytes(input: &JsValue, fn_name: &str) -> Result<Vec<u8>, JsValue> {
     // actionable message. Same failure, two different error shapes
     // depending purely on which realm the input happened to come from.
     //
-    // Fix: both realms now go through the same fallible copy path
+    // Fix: both realms went through the same fallible copy path
     // (`copy_bytes_from`, `Reflect`-based so it's `catch`-enabled rather
     // than trapping the wasm instance) and the same friendly-message
     // mapping on failure -- there's a single code path for "read the
     // bytes out of a byte-shaped input", not two.
+    //
+    // B48 (cold code review, minor): that unification made every
+    // same-realm call pay *two* copies -- `copy_bytes_from` builds a
+    // fresh `Uint8Array` via `Reflect.construct` (one copy) and then
+    // `.to_vec()`s it (a second copy) even when `input` already *is* a
+    // live, same-realm `Uint8Array` that could have been `.to_vec()`d
+    // directly. Measured +50% on copy-dominated `detect()` for 5 MB
+    // input.
+    //
+    // Fix: a same-realm `Uint8Array` with `byte_length() > 0` is
+    // guaranteed live -- a *detached* view's `byteLength` reads back as
+    // `0` per the spec (detaching zeroes the view's length/byteLength
+    // rather than leaving stale values), so a non-zero `byteLength` here
+    // proves the buffer has not been detached and `.to_vec()` cannot
+    // trap. Take that single-copy path directly. A `byteLength` of `0`
+    // is ambiguous between "genuinely empty" and "detached", so it still
+    // routes through the fallible `copy_bytes_from` path below, which
+    // tells the two apart by whether the `Reflect.construct` copy
+    // actually throws.
+    if let Some(arr) = input.dyn_ref::<js_sys::Uint8Array>() {
+        if arr.byte_length() > 0 {
+            return Ok(arr.to_vec());
+        }
+    }
+
     if input.dyn_ref::<js_sys::Uint8Array>().is_some() || looks_like_a_byte_typed_array(input) {
         return copy_bytes_from(input).map_err(|_| {
             js_sys::TypeError::new(&format!(
