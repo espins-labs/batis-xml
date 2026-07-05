@@ -58,6 +58,16 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
     }
 
     let mut reader = Reader::from_str(source);
+    // A18 (cold code review): quick-xml 0.41 defaults `allow_dangling_amp`
+    // to `false`, so a bare `&` (or an unterminated reference like `&amp`
+    // without a `;`) makes `read_event` return an error that swallows
+    // everything up to the next `<` -- silently dropping SQL text and any
+    // placeholder inside it. Enabling this turns a dangling `&` into
+    // ordinary (if unusual) `Text`, which `capture_body`'s `Event::Text`
+    // arm below now specifically diagnoses as `InvalidEntity` rather than
+    // losing the content. Every `Reader` this crate constructs needs the
+    // same setting -- see also `detect_dialect_str` and `capture_subtree`.
+    reader.config_mut().allow_dangling_amp = true;
     let mut diagnostics = Vec::new();
     let mut last_err_pos = None;
 
@@ -215,6 +225,10 @@ pub(crate) fn detect_dialect_str(source: &str) -> Dialect {
     }
 
     let mut reader = Reader::from_str(source);
+    // A18: see parse_str's identical setting -- this reader independently
+    // needs it too, since a dangling `&` before the root element would
+    // otherwise error out this cheap pre-check the same way.
+    reader.config_mut().allow_dangling_amp = true;
     let mut last_err_pos = None;
     loop {
         match reader.read_event() {
@@ -1398,14 +1412,31 @@ pub(crate) fn capture_body(
                 // `BytesText::unescape()`. `source` is always
                 // already-decoded UTF-8 text (see `encoding.rs`), so
                 // `decode()` (encoding only, not entity resolution) can't
-                // meaningfully fail here -- and as of 0.41 a `Text` event's
-                // content never contains an unresolved `&...;` anyway
-                // (entity/character references are now tokenized as their
-                // own `Event::GeneralRef`, handled separately below), so
-                // there is nothing left to unescape at this point.
+                // meaningfully fail here -- and a well-formed `&...;`
+                // reference never appears in a `Text` event's content
+                // (entity/character references are their own
+                // `Event::GeneralRef`, handled separately below).
                 let decoded = text.decode().map(|d| d.into_owned()).unwrap_or_else(|_| {
                     source[raw_span.start as usize..raw_span.end as usize].to_string()
                 });
+                // A18 (cold code review): with `allow_dangling_amp` enabled
+                // (see parse_str), a bare `&` that isn't part of a
+                // well-formed reference is delivered as literal `Text`
+                // rather than an error -- and quick-xml always starts a
+                // fresh `Text` event exactly at such a dangling `&` (never
+                // mid-run), so a leading `&` here unambiguously means this
+                // whole segment is one. Diagnose it the same way a
+                // malformed *resolved* reference already is (see the
+                // `GeneralRef` arm below) -- MM-08's raw-text-kept-verbatim
+                // rule means the SQL text, and any placeholder later in the
+                // same run, still survives untouched.
+                if decoded.starts_with('&') {
+                    diagnostics.push(Diagnostic {
+                        code: DiagCode::InvalidEntity,
+                        span: Some(raw_span),
+                        message: "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text".to_string(),
+                    });
+                }
                 segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
             }
             Ok(Event::GeneralRef(_entity_ref)) => {
@@ -1518,6 +1549,10 @@ pub(crate) fn capture_subtree(
 ) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
     let sub = &full_source[span.start as usize..span.end as usize];
     let mut reader = Reader::from_str(sub);
+    // A18: see parse_str's identical setting -- this is a fresh `Reader`
+    // over the marker's own byte slice, so it doesn't inherit the outer
+    // reader's config and needs the setting again.
+    reader.config_mut().allow_dangling_amp = true;
     match reader.read_event() {
         Ok(Event::Empty(_)) => (Vec::new(), Vec::new(), false),
         Ok(Event::Start(_)) => {
@@ -2235,6 +2270,8 @@ mod tests {
     /// whose body is what's under test, e.g. `<select id="x">...</select>`.
     fn run_capture(source: &str) -> (Vec<BodySegment>, Vec<Diagnostic>, bool) {
         let mut reader = Reader::from_str(source);
+        // A18: mirror every production caller's config (see parse_str).
+        reader.config_mut().allow_dangling_amp = true;
         reader.read_event().expect("wrapper start tag");
         capture_body(source, &mut reader, 0)
     }
@@ -2368,6 +2405,100 @@ mod tests {
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.statements.len(), 1);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::InvalidEntity));
+    }
+
+    // A18 (cold code review, BLOCKER): quick-xml 0.41's `allow_dangling_amp`
+    // defaults to `false`, so a bare `&` used to make `read_event` return an
+    // error that `capture_body`'s recovery path treated as unrecoverable
+    // markup -- silently dropping everything up to the next `<` (SQL text
+    // *and* any placeholder binding in it) and reporting `UnclosedTag`
+    // instead of `InvalidEntity`. These pin the fix: the reader config
+    // change plus the new diagnostic in the `Event::Text` arm.
+
+    #[test]
+    fn a18_bare_ampersand_is_kept_as_literal_text_with_diagnostic() {
+        let source = "<select id=\"x\">a & b</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert_eq!(text_decoded(&segments).concat(), "a & b");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagCode::InvalidEntity);
+        let dangling_start = source.find('&').unwrap() as u32;
+        assert_eq!(diagnostics[0].span.unwrap().start, dangling_start);
+    }
+
+    #[test]
+    fn a18_doubled_bare_ampersand_produces_one_diagnostic_per_dangling_amp() {
+        let source = "<select id=\"x\">a && b</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert_eq!(text_decoded(&segments).concat(), "a && b");
+        assert_eq!(diagnostics.len(), 2);
+        assert!(diagnostics
+            .iter()
+            .all(|d| d.code == DiagCode::InvalidEntity));
+    }
+
+    #[test]
+    fn a18_unterminated_named_reference_without_semicolon_is_kept_literal() {
+        // No trailing `;` after `amp` -- never a well-formed reference, so
+        // it must not resolve to `&` the way `&amp;` would.
+        let source = "<select id=\"x\">a &amp b</select>";
+        let (segments, diagnostics, truncated) = run_capture(source);
+        assert!(!truncated);
+        assert_eq!(text_decoded(&segments).concat(), "a &amp b");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagCode::InvalidEntity);
+    }
+
+    #[test]
+    fn a18_placeholder_after_bare_ampersand_survives_and_normalizes() {
+        let source = r#"<mapper namespace="x"><select id="a">a & #{v}</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1, "statement must not be dropped");
+        let stmt = &mapper.statements[0];
+        let SqlText::Variants(variants) = &stmt.sql else {
+            panic!("expected a single unconditional variant")
+        };
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].text.text, "a & ?");
+        assert_eq!(
+            stmt.property_paths
+                .iter()
+                .map(|p| p.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["v"],
+            "the placeholder after the dangling '&' must still bind"
+        );
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::InvalidEntity));
+    }
+
+    #[test]
+    fn a18_bare_ampersand_inside_if_still_diagnosed_and_content_preserved() {
+        let source = r#"<mapper namespace="x"><select id="a"><if test="x != null">a & #{v}</if></select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let stmt = &mapper.statements[0];
+        let SqlText::Variants(variants) = &stmt.sql else {
+            panic!("expected variants (if without else)")
+        };
+        assert_eq!(variants.len(), 2, "not-taken + taken branch");
+        assert!(variants.iter().any(|v| v.text.text.contains("a & ?")));
+        assert_eq!(
+            stmt.property_paths
+                .iter()
+                .map(|p| p.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["v"]
+        );
         assert!(result
             .diagnostics
             .iter()

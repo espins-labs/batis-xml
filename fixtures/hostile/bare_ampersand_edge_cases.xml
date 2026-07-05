@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <select id="a">SELECT 1 WHERE x = 'a &amp b' AND y &amp;&amp; z</select>
+  <select id="b">SELECT 1 <![CDATA[& straddling]]> &amp; more &amp #{p} &</select>

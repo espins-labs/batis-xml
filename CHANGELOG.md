@@ -32,3 +32,15 @@ added forward-compat enum/schema openness guarantees, added the
 detection). None of this changed the public model's field/variant names
 except the additive `DiagCode`/model-field growth already covered by
 `schema/README.md`'s additive-within-v1 policy.
+
+Correction to the quick-xml 0.37 → 0.41 bump's original changelog claim
+("degrading gracefully ... exactly as before"): a fourth review found
+that claim was wrong for one input shape. quick-xml 0.41's
+`allow_dangling_amp` defaults to `false`, so a bare `&` (or an
+unterminated reference like `&amp` without a `;`) made the reader error
+out and drop everything up to the next `<` -- silently losing SQL text
+and any placeholder inside it, and reporting `UnclosedTag` instead of
+`InvalidEntity`. Fixed by enabling `allow_dangling_amp` on every
+`Reader` this crate constructs and diagnosing the dangling case
+explicitly (raw text is kept verbatim, per the same MM-08 rule already
+applied to unresolvable named references).

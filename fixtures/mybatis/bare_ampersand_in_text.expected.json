@@ -1,0 +1,87 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 411
+        },
+        "id": {
+          "value": "selectWidgetsByTagExpression",
+          "span": {
+            "start": 221,
+            "end": 249
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE tags LIKE 'a & b' AND owner_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    294
+                  ],
+                  [
+                    75,
+                    369
+                  ],
+                  [
+                    96,
+                    399
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 263,
+            "end": 292
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "ownerId",
+            "span": {
+              "start": 391,
+              "end": 398
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": [
+    {
+      "code": "invalid_entity",
+      "span": {
+        "start": 369,
+        "end": 402
+      },
+      "message": "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text"
+    }
+  ]
+}
