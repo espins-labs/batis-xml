@@ -633,6 +633,18 @@ fn build_mapper(
     // cross-statement <include> resolution — that's a consumer/linker
     // concern (MM-05 collects refs; nothing here resolves them), not this
     // function's job.
+    //
+    // B36 (cold code review, minor): a top-level `<include>` is visited by
+    // both `lift_includes` (this function, top-level-only) and
+    // `flatten_body`'s own descent (`record_include`, which sees every
+    // `<include>` including top-level ones) -- see `merge_includes`'s doc
+    // comment. `merge_includes` already dedupes the resulting `IncludeRef`
+    // entries by span, but each pass calls `attr_value_spanned` on the same
+    // attribute independently, so an anomaly *in that attribute scan*
+    // (e.g. a duplicated `refid` attribute) was reported once per pass --
+    // an identical (code, span) diagnostic twice for one real anomaly.
+    // Dedup here, once, across the whole mapper.
+    dedup_diagnostics(&mut diagnostics);
     let mapper = Mapper {
         namespace,
         statements,
@@ -640,6 +652,35 @@ fn build_mapper(
         result_maps,
     };
     (mapper, diagnostics)
+}
+
+/// Removes exact duplicates -- same `code` and same *concrete* `span` --
+/// keeping the first occurrence and preserving order. Two diagnostics can
+/// share both a code and a real byte span only when they describe the
+/// exact same anomaly, reported by more than one independent pass over the
+/// same bytes (see the `B36` comment at this function's one call site).
+///
+/// A `span: None` diagnostic is deliberately left alone: unlike a concrete
+/// span, `None` carries no positional information, so two `None`-span
+/// diagnostics with the same code are not necessarily the same anomaly --
+/// e.g. `BranchLimitExceeded` is `span: None` (whole-statement scope) and
+/// legitimately recurs once per statement that independently exceeds the
+/// cap; deduping on code alone would silently drop every occurrence past
+/// the first real one.
+fn dedup_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
+    let mut seen: Vec<(DiagCode, ByteSpan)> = Vec::with_capacity(diagnostics.len());
+    diagnostics.retain(|d| {
+        let Some(span) = d.span else {
+            return true;
+        };
+        let key = (d.code, span);
+        if seen.contains(&key) {
+            false
+        } else {
+            seen.push(key);
+            true
+        }
+    });
 }
 
 /// Maps a statement-like tag's local name to its [`StatementKind`]. `None`
@@ -2407,6 +2448,87 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.code == DiagCode::DuplicateStatementId));
+    }
+
+    #[test]
+    fn b36_duplicate_attribute_on_a_top_level_include_is_reported_once() {
+        // Cold code review B36 (minor): a top-level <include> is visited by
+        // both lift_includes (parse.rs, top-level-only) and flatten_body's
+        // own descent (record_include, which sees every <include>,
+        // including top-level ones) -- merge_includes already dedupes the
+        // resulting IncludeRef entries by span, but each pass independently
+        // re-scans the tag's own attributes, so an anomaly in that scan
+        // (here: a duplicated refid attribute) was reported once per pass.
+        let source = r#"<mapper namespace="n">
+            <sql id="frag">x</sql>
+            <select id="a">SELECT 1 <include refid="frag" refid="frag2"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let dup_attr: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::DuplicateAttribute)
+            .collect();
+        assert_eq!(
+            dup_attr.len(),
+            1,
+            "expected exactly one DuplicateAttribute, got {dup_attr:?}"
+        );
+    }
+
+    #[test]
+    fn b36_dedup_diagnostics_collapses_identical_code_and_span_keeping_first() {
+        let span_a = ByteSpan { start: 5, end: 10 };
+        let span_b = ByteSpan { start: 20, end: 25 };
+        let mut diagnostics = vec![
+            Diagnostic {
+                code: DiagCode::DuplicateAttribute,
+                span: Some(span_a),
+                message: "first".to_string(),
+            },
+            Diagnostic {
+                code: DiagCode::DuplicateAttribute,
+                span: Some(span_a),
+                message: "second (duplicate, should be dropped)".to_string(),
+            },
+            Diagnostic {
+                code: DiagCode::DuplicateAttribute,
+                span: Some(span_b),
+                message: "different span, kept".to_string(),
+            },
+            Diagnostic {
+                code: DiagCode::UnknownElement,
+                span: Some(span_a),
+                message: "different code, same span, kept".to_string(),
+            },
+        ];
+        dedup_diagnostics(&mut diagnostics);
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].message, "first");
+        assert_eq!(diagnostics[1].message, "different span, kept");
+        assert_eq!(diagnostics[2].message, "different code, same span, kept");
+    }
+
+    #[test]
+    fn b36_dedup_diagnostics_never_collapses_none_span_entries() {
+        // BranchLimitExceeded is span: None (whole-statement scope) and
+        // legitimately recurs once per statement that independently
+        // exceeds the cap -- deduping on code alone would silently drop
+        // every occurrence past the first real one.
+        let mut diagnostics = vec![
+            Diagnostic {
+                code: DiagCode::BranchLimitExceeded,
+                span: None,
+                message: "statement one".to_string(),
+            },
+            Diagnostic {
+                code: DiagCode::BranchLimitExceeded,
+                span: None,
+                message: "statement two".to_string(),
+            },
+        ];
+        dedup_diagnostics(&mut diagnostics);
+        assert_eq!(diagnostics.len(), 2);
     }
 
     /// Test harness for [`capture_body`]: `source` must be a single element
