@@ -2560,7 +2560,7 @@ mod tests {
     #[test]
     fn trim_prefix_overrides_leading_strip_does_not_panic_on_leading_cjk() {
         let source = r#"<mapper namespace="x">
-            <select id="a"><trim prefix="WHERE " prefixOverrides="AND |OR ">사용여부 = 'Y'</trim></select>
+            <select id="a"><trim prefix="WHERE" prefixOverrides="AND |OR ">사용여부 = 'Y'</trim></select>
         </mapper>"#;
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
@@ -2571,7 +2571,7 @@ mod tests {
     #[test]
     fn trim_prefix_overrides_leading_strip_does_not_panic_on_leading_emoji() {
         let source = r#"<mapper namespace="x">
-            <select id="a"><trim prefix="WHERE " prefixOverrides="AND |OR ">🎉 = 1</trim></select>
+            <select id="a"><trim prefix="WHERE" prefixOverrides="AND |OR ">🎉 = 1</trim></select>
         </mapper>"#;
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
@@ -2660,13 +2660,13 @@ mod tests {
         let mapper = result.mapper.expect("mapper root");
         let vs = variants(&mapper.statements[0].sql);
         assert_eq!(vs.len(), 1);
-        assert_eq!(vs[0].text.text, "SELECT 1WHERE (a = ?)");
+        assert_eq!(vs[0].text.text, "SELECT 1WHERE ( a = ? )");
     }
 
     #[test]
     fn mm_06b_trim_contributes_nothing_when_inner_empty() {
         let source = r#"<mapper namespace="x">
-            <select id="a">SELECT 1<trim prefix="WHERE "><if test="a != null">a = #{a}</if></trim></select>
+            <select id="a">SELECT 1<trim prefix="WHERE"><if test="a != null">a = #{a}</if></trim></select>
         </mapper>"#;
         let result = parse_str(source);
         let mapper = result.mapper.expect("mapper root");
@@ -2674,6 +2674,45 @@ mod tests {
         let texts: std::collections::HashSet<_> = vs.iter().map(|v| v.text.text.clone()).collect();
         assert!(texts.contains("SELECT 1"));
         assert!(texts.contains("SELECT 1WHERE a = ?"));
+    }
+
+    // A5 (cold code review, publication blocker): expand_trim fused
+    // prefix/suffix directly onto the body (`WHEREwidget_name = ?`)
+    // instead of inserting the separating space MyBatis's TrimSqlNode
+    // always adds (`sql.insert(0, " ").insert(0, prefix)`,
+    // `append(" ").append(suffix)`).
+
+    #[test]
+    fn a5_trim_prefix_inserts_space_when_override_strips_leading_and() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="WHERE" prefixOverrides="AND |OR ">AND widget_name = #{name}</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "WHERE widget_name = ?");
+    }
+
+    #[test]
+    fn a5_trim_prefix_inserts_space_with_no_override_match() {
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="WHERE">a = 1</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "WHERE a = 1");
+    }
+
+    #[test]
+    fn a5_trim_suffix_inserts_space_before_word_suffix() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<trim suffix="END">a = 1</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "SELECT 1a = 1 END");
     }
 
     #[test]

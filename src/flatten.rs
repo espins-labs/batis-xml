@@ -529,11 +529,32 @@ fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u
 /// are added only when the inner text is non-empty; `*Overrides` are
 /// pipe-separated alternative lists (`"AND |OR "`), of which at most one
 /// match is stripped from each side.
+///
+/// A5 (cold code review, publication blocker): MyBatis's `TrimSqlNode`
+/// fuses `prefix`/`suffix` onto the body with an inserted space --
+/// `sql.insert(0, " "); sql.insert(0, prefix)` and
+/// `append(" ").append(suffix)` -- not verbatim concatenation. Passing the
+/// attribute straight into `with_prefix`/`with_suffix` (the previous
+/// behavior) fused `WHERE` directly onto the body with no separator:
+/// `<trim prefix="WHERE" ...>AND widget_name = #{name}</trim>` produced
+/// `WHEREwidget_name = ?` instead of `WHERE widget_name = ?`. `<where>`/
+/// `<set>` already hardcode the space in their own literal `"WHERE "`/
+/// `"SET "` prefixes and are unaffected.
 fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let prefix = read_attr(source, span, b"prefix", ctx);
     let suffix = read_attr(source, span, b"suffix", ctx);
     let prefix_overrides = split_overrides(&read_attr(source, span, b"prefixOverrides", ctx));
     let suffix_overrides = split_overrides(&read_attr(source, span, b"suffixOverrides", ctx));
+    let prefix_with_sep = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix} ")
+    };
+    let suffix_with_sep = if suffix.is_empty() {
+        String::new()
+    } else {
+        format!(" {suffix}")
+    };
 
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     ctx.diagnostics.append(&mut inner_diags);
@@ -548,9 +569,9 @@ fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, 
             } else {
                 let lead_strip = leading_override_strip_len(&inner_sql.text, &prefix_overrides);
                 let trail_strip = trailing_override_strip_len(&inner_sql.text, &suffix_overrides);
-                let with_lead = with_prefix(inner_sql, span.start, lead_strip, &prefix);
+                let with_lead = with_prefix(inner_sql, span.start, lead_strip, &prefix_with_sep);
                 let trimmed = with_suffix_strip(with_lead, trail_strip);
-                vec![to_piece(with_suffix(trimmed, span.start, &suffix))]
+                vec![to_piece(with_suffix(trimmed, span.start, &suffix_with_sep))]
             };
             Alt {
                 pieces,

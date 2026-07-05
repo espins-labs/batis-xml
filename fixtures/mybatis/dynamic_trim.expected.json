@@ -43,7 +43,7 @@
             },
             {
               "text": {
-                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREstatus = ?\n    \n  ",
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE status = ?\n    \n  ",
                 "span_map": [
                   [
                     0,
@@ -54,15 +54,15 @@
                     339
                   ],
                   [
-                    61,
+                    62,
                     485
                   ],
                   [
-                    71,
+                    72,
                     508
                   ],
                   [
-                    76,
+                    77,
                     520
                   ]
                 ]
@@ -73,7 +73,7 @@
             },
             {
               "text": {
-                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREwidget_name = ?\n      \n    \n  ",
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE widget_name = ?\n      \n    \n  ",
                 "span_map": [
                   [
                     0,
@@ -84,19 +84,19 @@
                     339
                   ],
                   [
-                    61,
+                    62,
                     422
                   ],
                   [
-                    76,
+                    77,
                     448
                   ],
                   [
-                    83,
+                    84,
                     508
                   ],
                   [
-                    88,
+                    89,
                     520
                   ]
                 ]
@@ -107,7 +107,7 @@
             },
             {
               "text": {
-                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHEREwidget_name = ?\n      AND status = ?\n    \n  ",
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE widget_name = ?\n      AND status = ?\n    \n  ",
                 "span_map": [
                   [
                     0,
@@ -118,23 +118,23 @@
                     339
                   ],
                   [
-                    61,
+                    62,
                     422
                   ],
                   [
-                    76,
+                    77,
                     448
                   ],
                   [
-                    83,
+                    84,
                     481
                   ],
                   [
-                    97,
+                    98,
                     508
                   ],
                   [
-                    102,
+                    103,
                     520
                   ]
                 ]
