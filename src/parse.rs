@@ -2852,6 +2852,33 @@ mod tests {
     }
 
     #[test]
+    fn b20_set_span_map_has_no_phantom_entry_when_text_ends_on_a_placeholder() {
+        // Cold code review B20: the normalize/assemble path itself (not
+        // just with_suffix_strip, B9) can emit a span_map entry at exactly
+        // `text.len()` -- a placeholder-with-options normalization
+        // unconditionally pushes an entry right after the replacement, and
+        // when that replacement is the last thing in the text (no
+        // trailing comma to strip this time -- jdbcType option, not a
+        // bare placeholder), the entry lands one byte past the end.
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set>a = #{a,jdbcType=VARCHAR}</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        let v = &vs[0];
+        assert_eq!(v.text.text, "UPDATE t SET a = ?");
+        for (off, _) in &v.text.span_map {
+            assert!(
+                (*off as usize) < v.text.text.len(),
+                "span_map entry at offset {off} is >= text length {} (phantom one-past-end entry)",
+                v.text.text.len()
+            );
+        }
+    }
+
+    #[test]
     fn mm_06b_set_omitted_when_inner_is_empty() {
         let source = r#"<mapper namespace="x">
             <update id="a">UPDATE t <set><if test="a != null">name = #{name},</if></set></update>

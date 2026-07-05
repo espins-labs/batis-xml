@@ -354,6 +354,18 @@ pub(crate) fn normalize_merged(runs: &[TextRun], dialect: Dialect) -> Normalized
         copy_start,
         bytes.len(),
     );
+
+    // B20 (cold code review): a placeholder replacement always pushes a
+    // span_map entry right after itself, unconditionally -- when that
+    // replacement is the last thing in the text (nothing follows it in
+    // this run), that entry lands at exactly `normalized.len()`, one byte
+    // past the end. Such an entry describes a segment whose start
+    // coincides with the text's own end -- zero surviving characters --
+    // so it's a phantom, not a real remaining segment. Same rule
+    // `with_suffix_strip` (flatten.rs, B9) already applies: `<`, not `<=`.
+    let final_len = normalized.len() as u32;
+    span_map.retain(|(off, _)| *off < final_len);
+
     NormalizedSegment {
         text: normalized,
         span_map,
@@ -482,8 +494,11 @@ mod tests {
         assert_eq!(result.property_paths[0].value, "id");
         let ByteSpan { start, end } = result.property_paths[0].span;
         assert_eq!(&decoded[(start - 100) as usize..(end - 100) as usize], "id");
-        // span_map: [0]->raw start, then one entry after the replacement.
-        assert_eq!(result.span_map.len(), 2);
+        // span_map: just the initial entry -- the placeholder is the last
+        // thing in the text, so the entry that used to land right after
+        // it (B20, cold code review) was a phantom one-past-end entry,
+        // now filtered.
+        assert_eq!(result.span_map.len(), 1);
         assert!(result.span_map.windows(2).all(|w| w[0].0 < w[1].0));
     }
 
@@ -673,7 +688,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a", "b", "c"]
         );
-        assert_eq!(result.span_map.len(), 4); // initial + 3 replacements
+        // initial + 2 replacements ("a", "b") -- the third ("c") is the
+        // last thing in the text, so its own trailing entry is a phantom
+        // one-past-end entry (B20, cold code review), now filtered.
+        assert_eq!(result.span_map.len(), 3);
         assert!(result.span_map.windows(2).all(|w| w[0].0 < w[1].0));
     }
 
