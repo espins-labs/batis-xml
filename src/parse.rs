@@ -256,11 +256,15 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
             // catch-all arm below and vanish with zero diagnostics -- see
             // `dangling_amp_diagnostic`'s doc comment.
             Ok(Event::Text(text)) => {
-                let decoded = text
-                    .decode()
-                    .map(|d| d.into_owned())
-                    .unwrap_or_else(|_| source[start as usize..].to_string());
-                if let Some(diag) = dangling_amp_diagnostic(&decoded, start as usize) {
+                let end = reader.buffer_position() as usize;
+                // B49: raw-byte peek + lazy decode + the fixed
+                // end-of-event fallback slice all live in
+                // `mapper_level_dangling_amp_diagnostic` now, shared with
+                // build_mapper's and scan_trailing_content's identical
+                // arms.
+                if let Some(diag) =
+                    mapper_level_dangling_amp_diagnostic(source, &text, start as usize, end)
+                {
                     diagnostics.push(diag);
                 }
             }
@@ -318,11 +322,12 @@ fn scan_trailing_content(
         match reader.read_event() {
             Ok(Event::Eof) => return,
             Ok(Event::Text(text)) => {
-                let decoded = text
-                    .decode()
-                    .map(|d| d.into_owned())
-                    .unwrap_or_else(|_| source[start as usize..].to_string());
-                if let Some(diag) = dangling_amp_diagnostic(&decoded, start as usize) {
+                let end = reader.buffer_position() as usize;
+                // B49: same shared helper as parse_str's/build_mapper's
+                // identical arms -- raw-byte peek before decoding.
+                if let Some(diag) =
+                    mapper_level_dangling_amp_diagnostic(source, &text, start as usize, end)
+                {
                     diagnostics.push(diag);
                 }
             }
@@ -743,11 +748,16 @@ fn build_mapper(
             // there, never reaches this loop), so this doesn't double up
             // with B36's dedup -- it's a different layer entirely.
             Ok(Event::Text(text)) => {
-                let decoded = text
-                    .decode()
-                    .map(|d| d.into_owned())
-                    .unwrap_or_else(|_| source[child_start as usize..].to_string());
-                if let Some(diag) = dangling_amp_diagnostic(&decoded, child_start as usize) {
+                let child_end = reader.buffer_position() as usize;
+                // B49: shared with parse_str's/scan_trailing_content's
+                // identical arms -- raw-byte peek before decoding, plus
+                // the fixed end-of-event fallback slice.
+                if let Some(diag) = mapper_level_dangling_amp_diagnostic(
+                    source,
+                    &text,
+                    child_start as usize,
+                    child_end,
+                ) {
                     diagnostics.push(diag);
                 }
             }
@@ -1600,6 +1610,43 @@ fn dangling_amp_diagnostic(decoded: &str, text_start: usize) -> Option<Diagnosti
         }),
         message: "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text".to_string(),
     })
+}
+
+/// B49 (cold code review, nit): the mapper-level/pre-root/trailing-content
+/// call sites (`parse_str`'s top loop, `build_mapper`'s loop,
+/// `scan_trailing_content`) discard the decoded text either way -- it
+/// exists only to feed `dangling_amp_diagnostic`'s `starts_with('&')`
+/// check. Before this, all three unconditionally called `text.decode()`
+/// (an allocating, owned `String` conversion) for *every* Text event at
+/// those layers -- overwhelmingly ordinary pretty-print whitespace
+/// between sibling tags, not anomalies -- which made
+/// `dangling_amp_diagnostic`'s own doc comment ("call sites only pay...
+/// when there's actually an anomaly") false for callers using this
+/// wrapper.
+///
+/// `&` is single-byte ASCII, and a `Text` event's `decode()` step only
+/// resolves the source encoding (never entities -- entity/character
+/// references are their own `Event::GeneralRef`, see A10's comment), so
+/// it never turns a non-`&` first byte into `&` or vice versa: peeking
+/// the raw event bytes for a leading `&` is exactly equivalent to
+/// checking the decoded string's first byte, without paying for the
+/// decode when the peek already says no. Returns `None` immediately
+/// (skipping `decode()` entirely) when the raw bytes don't start with
+/// `&`.
+fn mapper_level_dangling_amp_diagnostic(
+    source: &str,
+    text: &quick_xml::events::BytesText,
+    text_start: usize,
+    text_end: usize,
+) -> Option<Diagnostic> {
+    if text.first() != Some(&b'&') {
+        return None;
+    }
+    let decoded = text
+        .decode()
+        .map(|d| d.into_owned())
+        .unwrap_or_else(|_| source[text_start..text_end].to_string());
+    dangling_amp_diagnostic(&decoded, text_start)
 }
 
 /// B46 (cold code review): resolves one `Event::GeneralRef`'s raw bytes
