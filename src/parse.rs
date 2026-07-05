@@ -1520,9 +1520,26 @@ pub(crate) fn capture_body(
                 // rule means the SQL text, and any placeholder later in the
                 // same run, still survives untouched.
                 if decoded.starts_with('&') {
+                    // B43 (cold code review): the diagnostic's span used
+                    // to be `raw_span` -- the *whole* Text event, from the
+                    // dangling `&` all the way to wherever quick-xml next
+                    // cut the event (the next `<`/entity reference/EOF).
+                    // That fat span could (and did, in the shipped
+                    // `bare_ampersand_in_text` fixture) swallow dozens of
+                    // bytes of perfectly ordinary SQL text into an
+                    // "invalid entity" span, freezing incidental tokenizer
+                    // cut points into the conformance corpus. The anomaly
+                    // is exactly one byte -- the `&` itself -- so the span
+                    // should be exactly one byte too. `raw_span.start` is
+                    // already the `&`'s own offset (quick-xml starts a
+                    // fresh Text event exactly there, per the A18 comment
+                    // above), so only `end` needs narrowing.
                     diagnostics.push(Diagnostic {
                         code: DiagCode::InvalidEntity,
-                        span: Some(raw_span),
+                        span: Some(ByteSpan {
+                            start: raw_span.start,
+                            end: raw_span.start + 1,
+                        }),
                         message: "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text".to_string(),
                     });
                 }
@@ -2838,7 +2855,17 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::InvalidEntity);
         let dangling_start = source.find('&').unwrap() as u32;
-        assert_eq!(diagnostics[0].span.unwrap().start, dangling_start);
+        let span = diagnostics[0].span.unwrap();
+        assert_eq!(span.start, dangling_start);
+        // B43 (cold code review): the span used to run from the `&` all
+        // the way to wherever quick-xml next cut the Text event -- here,
+        // to end of input, swallowing " b" (innocent SQL text) into the
+        // "invalid entity" span. It must be exactly the one `&` byte.
+        assert_eq!(
+            span.end,
+            dangling_start + 1,
+            "dangling-amp InvalidEntity span must be exactly 1 byte (just the '&'), not the rest of the Text event"
+        );
     }
 
     #[test]

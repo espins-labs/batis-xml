@@ -79,7 +79,7 @@
       "code": "invalid_entity",
       "span": {
         "start": 369,
-        "end": 402
+        "end": 370
       },
       "message": "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text"
     }
