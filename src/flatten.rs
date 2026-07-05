@@ -538,7 +538,7 @@ fn expand_where(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>,
             } else {
                 let strip_n = leading_and_or_strip_len(&inner_sql.text);
                 vec![to_piece(with_prefix(
-                    inner_sql, span.start, strip_n, "WHERE ",
+                    source, inner_sql, span.start, strip_n, "WHERE ",
                 ))]
             };
             Alt {
@@ -575,7 +575,7 @@ fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u
                 // with_suffix_strip's subtraction.
                 let trailing_strip = trailing_comma_strip_len(&inner_sql.text)
                     .min(inner_sql.text.len() - leading_strip);
-                let with_lead = with_prefix(inner_sql, span.start, leading_strip, "SET ");
+                let with_lead = with_prefix(source, inner_sql, span.start, leading_strip, "SET ");
                 vec![to_piece(with_suffix_strip(with_lead, trailing_strip))]
             };
             Alt {
@@ -632,7 +632,8 @@ fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, 
             } else {
                 let lead_strip = leading_override_strip_len(&inner_sql.text, &prefix_overrides);
                 let trail_strip = trailing_override_strip_len(&inner_sql.text, &suffix_overrides);
-                let with_lead = with_prefix(inner_sql, span.start, lead_strip, &prefix_with_sep);
+                let with_lead =
+                    with_prefix(source, inner_sql, span.start, lead_strip, &prefix_with_sep);
                 let trimmed = with_suffix_strip(with_lead, trail_strip);
                 vec![to_piece(with_suffix(trimmed, span.start, &suffix_with_sep))]
             };
@@ -662,7 +663,7 @@ fn expand_foreach(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt
         .map(|alt| {
             let inner_sql = assemble(&alt.pieces);
             let wrapped = with_suffix(
-                with_prefix(inner_sql, span.start, 0, &open),
+                with_prefix(source, inner_sql, span.start, 0, &open),
                 span.start,
                 &close,
             );
@@ -757,6 +758,7 @@ fn expand_dynamic(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt
                 vec![to_piece(inner_sql)]
             } else {
                 vec![to_piece(with_prefix(
+                    source,
                     inner_sql,
                     span.start,
                     0,
@@ -810,7 +812,7 @@ fn expand_iterate(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt
         .map(|alt| {
             let inner_sql = assemble(&alt.pieces);
             let wrapped = with_suffix(
-                with_prefix(inner_sql, span.start, 0, &open),
+                with_prefix(source, inner_sql, span.start, 0, &open),
                 span.start,
                 &close,
             );
@@ -991,7 +993,13 @@ fn to_piece(sql: SqlString) -> Piece {
 /// the `<include>` token) to `sql`, first stripping `strip_n` leading bytes
 /// from `sql.text`. Re-bases the remaining span_map entries so offsets
 /// stay correct and strictly increasing.
-fn with_prefix(sql: SqlString, wrapper_start: u32, strip_n: usize, prefix: &str) -> SqlString {
+fn with_prefix(
+    source: &str,
+    sql: SqlString,
+    wrapper_start: u32,
+    strip_n: usize,
+    prefix: &str,
+) -> SqlString {
     // B19 (cold code review): nothing stripped and nothing prepended is a
     // genuine no-op -- return `sql` untouched. The code below used to
     // unconditionally rewrite the first span_map entry to the wrapper
@@ -1009,11 +1017,7 @@ fn with_prefix(sql: SqlString, wrapper_start: u32, strip_n: usize, prefix: &str)
 
     if !prefix.is_empty() || strip_n > 0 {
         // Find the raw offset corresponding to position `strip_n` in the
-        // original text: the last span_map entry at or before `strip_n`,
-        // extrapolated by the byte delta (an honest approximation — see
-        // placeholder.rs's span-fidelity note; exact when the run between
-        // entries is verbatim, which it usually is for plain wrapper
-        // boundary text like "AND ").
+        // original text: the last span_map entry at or before `strip_n`.
         let mut base_off = 0u32;
         let mut base_raw = sql
             .span_map
@@ -1028,7 +1032,28 @@ fn with_prefix(sql: SqlString, wrapper_start: u32, strip_n: usize, prefix: &str)
                 break;
             }
         }
-        let split_raw = base_raw + (strip_n as u32 - base_off);
+        // B21 (cold code review): extrapolating the split point as
+        // `base_raw + (strip_n - base_off)` assumes 1 decoded byte == 1 raw
+        // byte across [base_off, strip_n], which is usually true (plain
+        // wrapper boundary text like "AND ") but false when entity decoding
+        // happened in that span (`&#x41;ND ` decodes to `AND `, 6 raw bytes
+        // for 4 decoded ones). Extrapolating there would fabricate a
+        // precise-looking raw offset this crate has no basis for. Verify
+        // directly instead of inferring from neighboring span_map entries
+        // (a following entry doesn't always exist, e.g. when the whole
+        // trailing segment is coarse): the extrapolation is honest exactly
+        // when the decoded slice byte-for-byte equals the corresponding
+        // slice of the original source at the candidate raw offset. Byte
+        // (not char) slicing throughout, so this never panics on a
+        // non-char-boundary split (same rationale as A1).
+        let delta = strip_n - base_off as usize;
+        let candidate_raw = base_raw as usize + delta;
+        let decoded_slice = sql.text.as_bytes().get(base_off as usize..strip_n);
+        let source_slice = source.as_bytes().get(base_raw as usize..candidate_raw);
+        let split_raw = match (decoded_slice, source_slice) {
+            (Some(d), Some(s)) if d == s => candidate_raw as u32,
+            _ => base_raw,
+        };
         push_span_entry(&mut span_map, prefix.len() as u32, split_raw);
     }
 

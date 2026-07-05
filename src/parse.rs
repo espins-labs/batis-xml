@@ -2955,6 +2955,43 @@ mod tests {
         assert_eq!(vs[0].text.text, "SELECT 1a = 1 END");
     }
 
+    #[test]
+    fn b21_trim_leading_strip_over_entity_decoded_text_does_not_fabricate_offset() {
+        // Cold code review B21: with_prefix's strip-length extrapolation
+        // assumed 1 decoded byte == 1 raw byte, which is false once entity
+        // decoding shrinks/expands byte counts (`&#x41;` is 6 raw bytes
+        // for one decoded 'A'). Stripping the leading "AND " override
+        // match used to extrapolate straight into the middle of the
+        // `&#x41;` entity's own raw bytes -- a precise-looking but
+        // entirely fabricated offset. It must now fall back to the
+        // segment's own (honest) start instead.
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefixOverrides="AND |OR ">&#x41;ND widget_name = 1</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs[0].text.text, "widget_name = 1");
+
+        let entity_start = source.find("&#x41;").expect("entity in source") as u32;
+        let (_, raw) = vs[0]
+            .text
+            .span_map
+            .iter()
+            .find(|(off, _)| *off == 0)
+            .expect("span_map entry at offset 0");
+        assert_eq!(
+            *raw, entity_start,
+            "mapped offset must be the segment's own (coarse) start -- the position \
+             of the entity itself -- not a fabricated offset extrapolated into the \
+             middle of the entity's raw bytes"
+        );
+        // Slice the *original* bytes at that offset to prove it's a real,
+        // meaningful position (the start of the entity reference), not an
+        // arbitrary byte count into unrelated content.
+        assert_eq!(&source[*raw as usize..(*raw as usize + 6)], "&#x41;");
+    }
+
     // A7 (cold code review, major): DiagCode::IncludeAtWrapperBoundary is
     // emitted when an <include> is the first or last non-whitespace direct
     // child of a where/set/trim wrapper -- exactly the spot where MyBatis's
