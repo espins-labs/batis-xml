@@ -300,7 +300,8 @@
       "type": "object",
       "required": [
         "id",
-        "mappings"
+        "mappings",
+        "span"
       ],
       "properties": {
         "extends": {
@@ -396,6 +397,7 @@
       "required": [
         "id",
         "includes",
+        "span",
         "sql"
       ],
       "properties": {
@@ -534,6 +536,7 @@
         "includes",
         "kind",
         "property_paths",
+        "span",
         "sql"
       ],
       "properties": {

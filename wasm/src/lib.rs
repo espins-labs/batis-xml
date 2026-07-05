@@ -78,7 +78,13 @@ pub fn parse(
 /// reason to make callers `JSON.parse` it. Guaranteed to agree with
 /// `parse(bytes)`'s `dialect` field (see the core crate's contract test).
 /// Same `Uint8Array`/`Buffer` input validation as `parse` (A16).
-#[wasm_bindgen]
+///
+/// B32 (cold code review, minor): typed as the `Dialect` union
+/// (`unchecked_return_type`) rather than the generic `string` wasm-bindgen
+/// would otherwise infer from `Result<String, _>` -- callers get real
+/// autocomplete/type-narrowing on the three actual values instead of an
+/// unconstrained string.
+#[wasm_bindgen(unchecked_return_type = "\"mybatis\" | \"ibatis\" | \"unknown\"")]
 pub fn detect(
     #[wasm_bindgen(unchecked_param_type = "Uint8Array")] input: &JsValue,
 ) -> Result<String, JsValue> {

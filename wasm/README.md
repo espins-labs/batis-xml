@@ -76,10 +76,23 @@ present.** `Statement.database_id` is deliberately *not* folded into
 variants of the same statement (`databaseId="oracle"` / `"mysql"`)
 collide onto one key. Recommended recipe:
 
-```js
-const qualifiedName = statement.database_id
-  ? `${namespace}.${statement.id.value}@${statement.database_id.value}`
-  : `${namespace}.${statement.id.value}`;
+```ts
+// Both mapper.namespace (Option<Spanned<String>> — a namespace-less iBatis
+// sqlMap has none) and statement.id (Option<..>, absent + a
+// MissingStatementId diagnostic when the tag is missing an id attribute)
+// are nullable in the schema -- `statement.id` in particular is easy to
+// miss, since template literals silently accept `undefined` (stringified
+// as "undefined") instead of a type error, so `tsc --strict` alone won't
+// catch skipping this guard.
+if (statement.id == null) {
+  // No stable identifier for this statement at all -- MissingStatementId
+  // is already in result.diagnostics; skip it rather than fabricate a key.
+} else {
+  const namespace = mapper.namespace?.value ?? "";
+  const qualifiedName = statement.database_id
+    ? `${namespace}.${statement.id.value}@${statement.database_id.value}`
+    : `${namespace}.${statement.id.value}`;
+}
 ```
 
 **(d) `<include>` expands *before* `<where>`/`<set>`/`<trim>` in MyBatis/

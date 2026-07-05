@@ -162,7 +162,7 @@ export interface SqlFragment {
   /**
    * Full original extent: opening-tag start → subtree end.
    */
-  span?: ByteSpan;
+  span: ByteSpan;
   sql: SqlText;
   [k: string]: unknown;
 }
@@ -245,7 +245,7 @@ export interface ResultMap {
   /**
    * Full original extent: opening-tag start → subtree end.
    */
-  span?: ByteSpan;
+  span: ByteSpan;
   type_ref?: SpannedFor_ClassRef | null;
   [k: string]: unknown;
 }
@@ -302,7 +302,7 @@ export interface Statement {
   /**
    * Full original extent of the statement: opening-tag start → subtree end (i.e. past its closing tag, or its own end for a self-closed element).
    */
-  span?: ByteSpan;
+  span: ByteSpan;
   sql: SqlText;
   [k: string]: unknown;
 }
