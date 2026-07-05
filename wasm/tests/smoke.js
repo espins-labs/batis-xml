@@ -63,9 +63,49 @@ console.log(
   "PASS: statement id, span, __BATIS_DYN__ marker, and detect() all present/correct",
 );
 
+// A16 (cold code review, major): parse()/detect() used to silently coerce
+// a wrong-typed input instead of rejecting it -- a string became a
+// zero-filled buffer (misleading "no root element found", not an error
+// about the real mistake), a number "succeeded" with meaningless output,
+// and null/undefined threw an internal TypeError from deep inside the
+// generated glue code. All three must now throw one clear, explicit
+// TypeError instead.
+
+assertThrowsTypeError(
+  () => wasm.parse("<mapper></mapper>"),
+  "parse",
+  "a string",
+);
+assertThrowsTypeError(() => wasm.parse(42), "parse", "a number");
+assertThrowsTypeError(() => wasm.parse(null), "parse", "null");
+assertThrowsTypeError(() => wasm.detect("<mapper></mapper>"), "detect", "a string");
+assertThrowsTypeError(() => wasm.detect(42), "detect", "a number");
+assertThrowsTypeError(() => wasm.detect(null), "detect", "null");
+
+console.log(
+  "PASS: parse()/detect() reject string/number/null input with a clear TypeError",
+);
+
 function assert(cond, message) {
   if (!cond) {
     console.error(`FAIL: ${message}`);
     process.exit(1);
   }
+}
+
+function assertThrowsTypeError(fn, fnName, inputDescription) {
+  try {
+    fn();
+  } catch (err) {
+    assert(
+      err instanceof TypeError,
+      `expected ${fnName}(${inputDescription}) to throw a TypeError, got ${err}`,
+    );
+    assert(
+      err.message.includes(fnName) && err.message.includes("Uint8Array"),
+      `expected ${fnName}(${inputDescription})'s error message to name the function and expected type, got: ${err.message}`,
+    );
+    return;
+  }
+  assert(false, `expected ${fnName}(${inputDescription}) to throw, but it returned normally`);
 }
