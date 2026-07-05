@@ -31,7 +31,7 @@
   },
   "definitions": {
     "ByteSpan": {
-      "description": "Half-open range `[start, end)` in **original bytes** — never in the decoded string.\n\nCaveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents decoded from any other encoding (EUC-KR, Shift_JIS, GB18030, UTF-16, ... -- see `encoding.rs`, which supports every WHATWG encoding via a BOM/declared-label-driven chain, not just EUC-KR), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. This applies uniformly to every re-encoded document, not just Korean legacy files. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.",
+      "description": "Half-open range `[start, end)`: byte offsets into the UTF-8 text as decoded by this crate (identical to raw input bytes for UTF-8 sources; see the caveat below for re-encoded documents). B23 (cold code review): the previous headline -- \"in original bytes -- never in the decoded string\" -- directly contradicted its own caveat below for every non-UTF-8 input, since spans on a re-encoded document *are* offsets into the decoded string, not the original raw bytes.\n\nCaveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents decoded from any other encoding (EUC-KR, Shift_JIS, GB18030, UTF-16, ... -- see `encoding.rs`, which supports every WHATWG encoding via a BOM/declared-label-driven chain, not just EUC-KR), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. This applies uniformly to every re-encoded document, not just Korean legacy files. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.",
       "type": "object",
       "required": [
         "end",
@@ -90,10 +90,16 @@
             "unclosed_tag",
             "duplicate_statement_id",
             "missing_statement_id",
-            "dangling_refid",
             "branch_limit_exceeded",
             "unknown_element",
             "oversize_input"
+          ]
+        },
+        {
+          "description": "A **file-local heuristic**: this crate parses one mapper file at a time and has no view of any other file's `<sql>` fragments, so this is only emitted for MyBatis (`Dialect::Mybatis`), whose namespaces are per-file and whose refids are typically resolved within them. Never emitted for iBatis (B22, cold code review) -- iBatis fragments are a global cross-file registry by design (any sqlMap can reference any other sqlMap's `<sql>` by short name), so this heuristic would flag nearly every legitimate cross-file reference as dangling. Consumers that resolve `<include>` across an entire project (rather than one file) should treat a *missing* `DanglingRefid` as \"not checked here\", not \"resolved\" -- upstream MyBatis also supports cross-namespace short-name resolution that this single-file view can't see either, so even the MyBatis case is a heuristic, not a guarantee.",
+          "type": "string",
+          "enum": [
+            "dangling_refid"
           ]
         },
         {

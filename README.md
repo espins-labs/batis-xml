@@ -23,8 +23,10 @@ mapper XML ──▶ batis-xml ──▶ { statements, flattened SQL variants,
 - **Never fails**: broken, truncated, half-edited XML produces partial
   results plus diagnostics — no panics, no `Err`. Built for codebases where
   "malformed" is the steady state.
-- **Position-faithful**: every node carries original byte spans; flattened
-  SQL carries a span map back to the XML source.
+- **Position-faithful**: every node carries byte spans into the decoded
+  UTF-8 text (identical to original bytes for UTF-8 sources — see
+  `ByteSpan`'s rustdoc for the re-encoded-document caveat); flattened SQL
+  carries a span map back to the XML source.
 - **Language-neutral output**: the serde JSON model is the published schema.
   Ports to other languages validate against the shipped conformance corpus
   (`fixtures/`), not against this codebase.

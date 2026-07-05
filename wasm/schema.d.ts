@@ -18,11 +18,11 @@ export type DiagCode =
       | "unclosed_tag"
       | "duplicate_statement_id"
       | "missing_statement_id"
-      | "dangling_refid"
       | "branch_limit_exceeded"
       | "unknown_element"
       | "oversize_input"
     )
+  | "dangling_refid"
   | "duplicate_attribute"
   | "invalid_entity"
   | "unterminated_placeholder"
@@ -115,7 +115,7 @@ export interface Diagnostic {
   [k: string]: unknown;
 }
 /**
- * Half-open range `[start, end)` in **original bytes** — never in the decoded string.
+ * Half-open range `[start, end)`: byte offsets into the UTF-8 text as decoded by this crate (identical to raw input bytes for UTF-8 sources; see the caveat below for re-encoded documents). B23 (cold code review): the previous headline -- "in original bytes -- never in the decoded string" -- directly contradicted its own caveat below for every non-UTF-8 input, since spans on a re-encoded document *are* offsets into the decoded string, not the original raw bytes.
  *
  * Caveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents decoded from any other encoding (EUC-KR, Shift_JIS, GB18030, UTF-16, ... -- see `encoding.rs`, which supports every WHATWG encoding via a BOM/declared-label-driven chain, not just EUC-KR), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. This applies uniformly to every re-encoded document, not just Korean legacy files. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.
  *

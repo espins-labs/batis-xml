@@ -15,8 +15,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Half-open range `[start, end)` in **original bytes** — never in the
-/// decoded string.
+/// Half-open range `[start, end)`: byte offsets into the UTF-8 text as
+/// decoded by this crate (identical to raw input bytes for UTF-8 sources;
+/// see the caveat below for re-encoded documents). B23 (cold code review):
+/// the previous headline -- "in original bytes -- never in the decoded
+/// string" -- directly contradicted its own caveat below for every
+/// non-UTF-8 input, since spans on a re-encoded document *are* offsets
+/// into the decoded string, not the original raw bytes.
 ///
 /// Caveat: this holds exactly for UTF-8 input, which decoding leaves
 /// byte-for-byte unchanged. For documents decoded from any other
