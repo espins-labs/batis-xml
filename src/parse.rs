@@ -123,6 +123,13 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                             dialect,
                         );
                         diagnostics.append(&mut mapper_diags);
+                        // B47: the root just closed (build_mapper only
+                        // returns once it consumed the root's matching
+                        // `End`) -- scan whatever follows for the same two
+                        // narrow anomalies covered everywhere else in this
+                        // tree, instead of returning without ever reading
+                        // another event.
+                        scan_trailing_content(source, &mut reader, &mut diagnostics);
                         ParseResult {
                             dialect,
                             mapper: Some(mapper),
@@ -160,6 +167,10 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         let (mapper, mut mapper_diags) =
                             mapper_with_namespace(source, start as usize, end as usize);
                         diagnostics.append(&mut mapper_diags);
+                        // B47: a self-closed root is already "complete" the
+                        // instant this Empty event was read -- same
+                        // trailing scan as the Start/build_mapper case.
+                        scan_trailing_content(source, &mut reader, &mut diagnostics);
                         ParseResult {
                             dialect: Dialect::Mybatis,
                             mapper: Some(mapper),
@@ -171,6 +182,8 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                         let (mapper, mut mapper_diags) =
                             mapper_with_namespace(source, start as usize, end as usize);
                         diagnostics.append(&mut mapper_diags);
+                        // B47: see the "mapper" arm above.
+                        scan_trailing_content(source, &mut reader, &mut diagnostics);
                         ParseResult {
                             dialect: Dialect::Ibatis,
                             mapper: Some(mapper),
@@ -272,6 +285,76 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                     diagnostics.push(diag);
                 }
             }
+            _ => continue,
+        }
+    }
+}
+
+/// B47 (cold code review, minor): `parse_str` used to return as soon as
+/// the root element (however it completed -- matching `End`, or a
+/// self-closed `Empty`) was accounted for, never reading another event --
+/// so `</mapper>&` or `</mapper> &nbsp;` were silently accepted with zero
+/// diagnostics, and B44's "regardless of which layer" doc comment
+/// overstated coverage (it never covered *after* the root).
+///
+/// Continues reading events (on the same `reader`, which is already
+/// positioned right after the root closed) until `Eof`, applying only the
+/// two diagnostics B44/B46 established for mapper-level/pre-root content:
+/// a dangling `&` (`Event::Text`) and an unresolvable entity reference
+/// (`Event::GeneralRef`). Deliberately narrow scope, matching this
+/// function's name: any *other* trailing content (stray elements, stray
+/// well-formed text, comments, a second root-like element) stays silently
+/// ignored, exactly as it was before this fix -- B47 only closes the
+/// dangling-`&`/unresolvable-entity gap, it does not attempt full
+/// validation of trailing garbage.
+fn scan_trailing_content(
+    source: &str,
+    reader: &mut Reader<&[u8]>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut last_err_pos = None;
+    loop {
+        let start = reader.buffer_position();
+        match reader.read_event() {
+            Ok(Event::Eof) => return,
+            Ok(Event::Text(text)) => {
+                let decoded = text
+                    .decode()
+                    .map(|d| d.into_owned())
+                    .unwrap_or_else(|_| source[start as usize..].to_string());
+                if let Some(diag) = dangling_amp_diagnostic(&decoded, start as usize) {
+                    diagnostics.push(diag);
+                }
+            }
+            Ok(Event::GeneralRef(_entity_ref)) => {
+                let end = reader.buffer_position() as usize;
+                let raw_span = ByteSpan {
+                    start: start as u32,
+                    end: end as u32,
+                };
+                let raw_text = &source[raw_span.start as usize..raw_span.end as usize];
+                let (_decoded, diag) = resolve_general_ref(raw_text, raw_span);
+                if let Some(diag) = diag {
+                    diagnostics.push(diag);
+                }
+            }
+            Err(err) => {
+                // Same stuck-guard as every other loop in this module
+                // (recovery rules 2/4): quick-xml has already
+                // resynchronized past a recoverable error by the time it
+                // returns one, so only bail out if genuinely stuck at the
+                // same position -- otherwise trailing malformed markup
+                // after the root could spin forever.
+                let pos = reader.error_position();
+                if last_err_pos == Some(pos) {
+                    return;
+                }
+                last_err_pos = Some(pos);
+                let _ = err;
+            }
+            // Everything else after the root -- stray elements, ordinary
+            // text, comments, another root-like element -- stays out of
+            // scope per this function's doc comment.
             _ => continue,
         }
     }
@@ -1488,7 +1571,9 @@ fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnos
 /// continue` arm and produced *zero* diagnostics (pre-A18, the same input
 /// at least produced a recovery diagnostic, since `allow_dangling_amp`
 /// wasn't enabled yet). Every anomaly must become a `Diagnostic`
-/// (CLAUDE.md rule 4) regardless of which layer of the tree it's in.
+/// (CLAUDE.md rule 4) regardless of which layer of the tree it's in --
+/// B44 covered before-root and between-siblings; B47 later closed the
+/// remaining gap, *after* the root element closes (`scan_trailing_content`).
 ///
 /// `text_start` is the byte offset the enclosing `Ok(Event::Text(text))`
 /// arm's `reader.buffer_position()` was read *before* consuming the
@@ -3306,6 +3391,125 @@ mod tests {
             "expected exactly one InvalidEntity diagnostic for the in-body reference, got {:?}",
             result.diagnostics
         );
+    }
+
+    // B47 (cold code review, minor): parse_str returned from inside the
+    // root-Start/Empty arm as soon as the root element completed, never
+    // reading another event -- so `</mapper>&` or `</mapper> &nbsp;` were
+    // silently accepted. These pin `scan_trailing_content`, which applies
+    // only the dangling-'&'/unresolvable-entity diagnostics (B44/B46)
+    // after the root closes; other trailing content stays ignored.
+
+    #[test]
+    fn b47_dangling_amp_immediately_after_root_close_is_diagnosed() {
+        let source = "<mapper namespace=\"x\"></mapper>&";
+        let result = parse_str(source);
+        assert!(result.mapper.is_some(), "the root element must still parse");
+        let amp_pos = source.rfind('&').unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        // Byte-verified 1-byte span, per spec.
+        assert_eq!(span.start, amp_pos);
+        assert_eq!(
+            span.end,
+            amp_pos + 1,
+            "dangling-amp span after root close must be exactly 1 byte"
+        );
+        assert_eq!(&source[span.start as usize..span.end as usize], "&");
+    }
+
+    #[test]
+    fn b47_unresolvable_entity_after_root_close_is_diagnosed_with_full_span() {
+        let source = "<mapper namespace=\"x\"></mapper> &nbsp;";
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+        let ref_pos = source.find("&nbsp;").unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, ref_pos);
+        assert_eq!(span.end, ref_pos + "&nbsp;".len() as u32);
+        assert_eq!(
+            &source[span.start as usize..span.end as usize],
+            "&nbsp;",
+            "span must cover the full reference, '&' through ';' inclusive"
+        );
+    }
+
+    #[test]
+    fn b47_plain_trailing_text_after_root_close_has_no_diagnostic() {
+        // Ordinary trailing whitespace/text -- not an anomaly at all,
+        // must not be flagged.
+        let source = "<mapper namespace=\"x\"></mapper>\n   \n";
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+        assert!(
+            result.diagnostics.is_empty(),
+            "plain trailing whitespace must not be diagnosed, got {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn b47_trailing_content_after_sqlmap_close_is_equally_covered() {
+        let source = "<sqlMap></sqlMap> &nbsp;";
+        let result = parse_str(source);
+        assert_eq!(result.dialect, Dialect::Ibatis);
+        assert!(result.mapper.is_some());
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn b47_dangling_amp_after_self_closed_root_is_diagnosed() {
+        // Self-closed root (Event::Empty) is a separate code path from
+        // Event::Start/build_mapper -- must be covered too.
+        let source = "<mapper namespace=\"x\"/>&";
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+        let amp_pos = source.rfind('&').unwrap() as u32;
+        let diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let span = diags[0].span.expect("must carry a span");
+        assert_eq!(span.start, amp_pos);
+        assert_eq!(span.end, amp_pos + 1);
     }
 
     #[test]
