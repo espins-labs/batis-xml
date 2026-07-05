@@ -231,7 +231,9 @@ export interface SqlVariant {
  */
 export interface SqlString {
   /**
-   * (synthetic-text offset, original byte offset) segment-start pairs — strictly increasing.
+   * (synthetic-text offset, original byte offset) segment-start pairs.
+   *
+   * Only the first column -- the synthetic-text offset (position in `text` above) -- is strictly increasing (B45, cold code review): each entry marks where a new mapped segment starts in the flattened output, so later entries always point further into `text` than earlier ones. The second column -- the original byte offset into the source document -- has no such guarantee, and legitimately repeats or goes backwards at synthetic tokens. Wrapper-added text (a `<trim>`/`<where>`/`<set>`/`<foreach>`'s `prefix`/`open`/`close`/`separator` etc.) has no original bytes of its own, so its span_map entry reuses the wrapper tag's own span start -- for *every* synthetic token the wrapper contributes, including a trailing `close`. E.g. `<foreach open="(" close=")">` around `#{id}` flattens to `"(?)"` with `span_map == [(0, wrapper_start), (1, <raw offset of #{id}>), (2, wrapper_start)]` -- the raw column rises across the body then drops back to `wrapper_start` for the closing `)`, which sits earlier in the source than the body it follows in `text`. Consumers must sort/dedupe on the first column only; the second is not monotonic and must not be assumed so.
    */
   span_map: [number, number][];
   /**
