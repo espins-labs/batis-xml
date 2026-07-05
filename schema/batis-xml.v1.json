@@ -151,7 +151,7 @@
           ]
         },
         {
-          "description": "Forward-compat deserialization fallback: any code string this build doesn't recognize (e.g. JSON produced by a newer batis-xml version) lands here instead of failing to deserialize. Never produced by this crate's own parser -- hidden from docs since it's a deserialization mechanism, not a diagnostic you'd match on intentionally.",
+          "description": "Forward-compat deserialization fallback: any code string this build doesn't recognize (e.g. JSON produced by a newer batis-xml version) lands here instead of failing to deserialize the whole document. Never produced by this crate's own parser -- it's part of the deserialization contract (see this enum's own doc comment), not a diagnostic this crate ever emits itself, so treat a `match` arm on it as \"some future code I don't know about yet\", never as a specific, actionable anomaly.",
           "type": "string",
           "enum": [
             "other"
