@@ -24,7 +24,14 @@ use std::collections::HashSet;
 /// Per-spec cap (10 MB) on input handed to the parser — oversize input is
 /// absorbed as `mapper: None` + `OversizeInput` rather than attempting to
 /// tokenize an arbitrarily large document.
-const OVERSIZE_LIMIT: usize = 10 * 1024 * 1024;
+///
+/// `pub(crate)` so `lib.rs` can check it against the *raw byte* length
+/// before ever decoding (cold review R2/B5) -- checking only here, after
+/// decoding, means a huge input (e.g. 1 GB) still pays for a full decode
+/// and allocation before being rejected. Both checks stay: this one is a
+/// defense-in-depth backstop for the case a multi-byte legacy encoding
+/// expands during decoding (e.g. EUC-KR -> UTF-8 can grow the byte count).
+pub(crate) const OVERSIZE_LIMIT: usize = 10 * 1024 * 1024;
 
 /// MM-01: identifies the root element and derives the dialect from its
 /// name (`<mapper>` → MyBatis, `<sqlMap>` → iBatis).
