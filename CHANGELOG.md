@@ -20,3 +20,15 @@ their iBatis equivalents), `<include>` resolution, `resultMap` mapping
 collection, placeholder normalization, encoding detection, and
 hostile-input recovery (no panics, no `Err`). See `README.md` for the
 full feature list and `DEVELOPMENT.md` for the pre-publish checklist.
+
+Hardened through three internal pre-publish reviews before the first
+tag: fixed several panics on multibyte/pathological input (char-boundary
+slicing, unbounded recursion, trim-strip overlap), corrected dynamic-SQL
+flattening gaps (`<trim>` prefix/suffix spacing, `<set>` leading-comma
+strip, `<selectKey>` statement splitting, iBatis `##`/`$$` escapes),
+added forward-compat enum/schema openness guarantees, added the
+`ParseResult.encoding` field, and expanded diagnostics coverage
+(`IncludeAtWrapperBoundary`, `NestingLimitExceeded`, unrecognized-element
+detection). None of this changed the public model's field/variant names
+except the additive `DiagCode`/model-field growth already covered by
+`schema/README.md`'s additive-within-v1 policy.

@@ -15,10 +15,9 @@ mod placeholder;
 
 pub use model::*;
 
-/// Raw input byte cap (B25, cold code review: previously only documented
-/// as "the 10 MB cap" in prose comments, not a checkable value). Input
-/// over this size is rejected before decoding is even attempted — see
-/// [`DiagCode::OversizeInput`], [`parse_bytes`], and [`detect_dialect`].
+/// Raw input byte cap. Input over this size is rejected before decoding
+/// is even attempted — see [`DiagCode::OversizeInput`], [`parse_bytes`],
+/// and [`detect_dialect`].
 pub const MAX_INPUT_BYTES: usize = parse::OVERSIZE_LIMIT;
 
 /// Parses an already-decoded string. Never fails — every anomaly is

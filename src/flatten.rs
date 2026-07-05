@@ -58,7 +58,7 @@ pub(crate) const BRANCH_LIMIT: u32 = 32;
 /// bail out (each level's cartesian multiplication only happens on the
 /// way back up, after the full depth-first descent) -- a stack overflow
 /// aborts the process (uncatchable), unlike every other anomaly in this
-/// crate. Cold code review B2/B3, 2026-07-05.
+/// crate.
 pub(crate) const DEPTH_LIMIT: u32 = 256;
 
 pub(crate) struct FlattenResult {
@@ -232,7 +232,7 @@ fn flatten_segments(
 
 /// One dispatch unit for the main flattening/union walks: either a run of
 /// one or more consecutive [`BodySegment::Text`] entries, or a single
-/// [`BodySegment::DynamicTag`]. B16 (cold code review): a run must be
+/// [`BodySegment::DynamicTag`]. A run must be
 /// normalized as ONE logical piece of text (see [`normalize_run`]) so a
 /// placeholder split across a text/CDATA boundary (two separate
 /// `BodySegment::Text` entries in document order) is recognized as one
@@ -489,7 +489,7 @@ fn expand_transparent(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec
     flatten_segments(source, &inner_segments, ctx)
 }
 
-/// A7 (cold code review, major): MyBatis expands `<include>` *before*
+/// MyBatis expands `<include>` *before*
 /// dynamic evaluation, so a `<where>`/`<set>`/`<trim>`'s own leading-AND/OR
 /// or trailing-comma rule sees the fragment's actual substituted text.
 /// This crate flattens with the include token still in place (fragment
@@ -623,7 +623,7 @@ fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u
 /// pipe-separated alternative lists (`"AND |OR "`), of which at most one
 /// match is stripped from each side.
 ///
-/// A5 (cold code review, publication blocker): MyBatis's `TrimSqlNode`
+/// MyBatis's `TrimSqlNode`
 /// fuses `prefix`/`suffix` onto the body with an inserted space --
 /// `sql.insert(0, " "); sql.insert(0, prefix)` and
 /// `append(" ").append(suffix)` -- not verbatim concatenation. Passing the
@@ -1241,10 +1241,10 @@ fn trailing_comma_strip_len(text: &str) -> usize {
     }
 }
 
-/// Length to strip from the start for `<set>`'s leading-comma rule (B17,
-/// cold code review): a comma immediately after the leading whitespace
-/// run, plus the whitespace between it and the first real content --
-/// mirrors [`trailing_comma_strip_len`], reversed.
+/// Length to strip from the start for `<set>`'s leading-comma rule: a
+/// comma immediately after the leading whitespace run, plus the
+/// whitespace between it and the first real content -- mirrors
+/// [`trailing_comma_strip_len`], reversed.
 fn leading_comma_strip_len(text: &str) -> usize {
     let bytes = text.as_bytes();
     let mut i = 0;

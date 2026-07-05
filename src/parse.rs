@@ -631,7 +631,7 @@ fn statement_kind(local_name: &[u8]) -> Option<StatementKind> {
 /// `<resultMap>`) or dynamic position (nested inside a statement/fragment
 /// body, reached via [`crate::flatten::expand_transparent`]'s catch-all).
 ///
-/// A14 (cold code review, major): before this list existed, *every*
+/// Before this list existed, *every*
 /// unrecognized element silently vanished the same way, whether it was a
 /// deliberately-out-of-scope one like `<cache>` or a genuine typo like
 /// `<slect>`/`<iff>` -- there was no way to tell "this crate doesn't model
@@ -656,7 +656,7 @@ pub(crate) fn is_known_ignorable_element(local_name: &str) -> bool {
 /// (`<select/>`, `<sql/>`), which never go through `capture_body`/
 /// `flatten_body` at all.
 ///
-/// Cold code review B10: this used to be `SqlText::Variants(Vec::new())`
+/// This used to be `SqlText::Variants(Vec::new())`
 /// (zero variants) for self-closed elements specifically -- a different,
 /// inconsistent shape from `<select></select>` (one empty variant).
 /// Consumers matching on `SqlText::Variants(vs)` and indexing `vs[0]`
@@ -751,7 +751,7 @@ fn build_statement(
     (statement, diagnostics)
 }
 
-/// A6 (cold code review, major): `<selectKey>` used to be treated as a
+/// `<selectKey>` used to be treated as a
 /// transparent passthrough dynamic tag (flatten.rs's default arm for any
 /// tag name it doesn't recognize) -- its body text got concatenated
 /// straight into the parent statement's SQL, e.g. `SELECT NEXT VALUE FOR
@@ -769,7 +769,7 @@ fn build_statement(
 /// dynamic tag (not a direct child -- not valid MyBatis/iBatis, but not
 /// rejected either) is out of scope here and keeps the previous
 /// passthrough behavior, same as any other unrecognized nested tag.
-/// B27 (cold code review, minor): `<selectKey>` only makes sense as a
+/// `<selectKey>` only makes sense as a
 /// direct child of an `<insert>`/`<update>` statement (see
 /// [`extract_select_keys`], which splits it into its own synthesized
 /// `Statement` there) -- a `<sql>` fragment has no `MappedStatement` to

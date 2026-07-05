@@ -39,7 +39,7 @@ export type Dialect = "mybatis" | "ibatis" | "unknown";
 /**
  * Closed set: an exhaustive `match` is a consumer feature. `Dynamic` already covers "can't be resolved statically" -- there's no third kind of refid target. Adding a variant here would be a v2.
  *
- * ## Expansion-order contract (A7, cold code review)
+ * ## Expansion-order contract
  *
  * This crate never substitutes the referenced `<sql>` fragment's text in place of the `<include>` token -- resolving `IncludeTarget` to actual SQL and splicing it in is entirely the consumer's job. MyBatis/iBatis themselves expand `<include>` *before* evaluating `<where>`/`<set>`/ `<trim>` dynamic semantics, so a wrapper's leading-AND/OR strip or trailing-comma strip sees the fragment's real, substituted text. Flattening here with the token still in place means a consumer substituting fragment text in afterward must, at minimum:
  *
@@ -123,7 +123,7 @@ export interface Diagnostic {
   [k: string]: unknown;
 }
 /**
- * Half-open range `[start, end)`: byte offsets into the UTF-8 text as decoded by this crate (identical to raw input bytes for UTF-8 sources; see the caveat below for re-encoded documents). B23 (cold code review): the previous headline -- "in original bytes -- never in the decoded string" -- directly contradicted its own caveat below for every non-UTF-8 input, since spans on a re-encoded document *are* offsets into the decoded string, not the original raw bytes.
+ * Half-open range `[start, end)`: byte offsets into the UTF-8 text as decoded by this crate (identical to raw input bytes for UTF-8 sources; see the caveat below for re-encoded documents).
  *
  * Caveat: this holds exactly for UTF-8 input, which decoding leaves byte-for-byte unchanged. For documents decoded from any other encoding (EUC-KR, Shift_JIS, GB18030, UTF-16, ... -- see `encoding.rs`, which supports every WHATWG encoding via a BOM/declared-label-driven chain, not just EUC-KR), decoding to UTF-8 changes byte *widths* per character, so spans on such documents are offsets into the re-encoded UTF-8 string, not the original raw bytes. This applies uniformly to every re-encoded document, not just Korean legacy files. Consumers reading spans back against a source file must decode that source the same way this crate did before slicing.
  *
@@ -185,7 +185,7 @@ export interface SpannedFor_IncludeRef {
   [k: string]: unknown;
 }
 /**
- * A17 (cold code review, major): the include-token textual contract -- a stable part of the v1 output, documented here because nothing in the public docs said what the token actually looks like before this.
+ * The include-token textual contract -- a stable part of the v1 output.
  *
  * Every `<include refid="...">` marker renders into the flattened [`SqlText`] as a SQL block comment: an opening `/`+`*`, the literal text `batis:include(`, this struct's own `raw` field, a closing `)`, then the closing `*`+`/`. `raw` is rendered verbatim -- the unparsed `refid` attribute value -- **except** any literal `*` immediately followed by `/` inside it is rewritten to `*` + `_` + `/`, so the token can never terminate its own enclosing comment early (a `refid` is untrusted XML attribute content, not something this crate controls the shape of). This holds regardless of `target`'s classification: `Local("frag")` renders the comment around `frag` verbatim; `Qualified { ns: "otherNs", id: "frag" }` renders the *original, still-dotted* text `otherNs.frag` (`raw` is the whole unparsed attribute value; `ns`/`id` are just it split on the last dot for convenience, not a separate rendering); `Dynamic` renders the literal, unresolved `${...}` text as-is.
  *

@@ -76,7 +76,7 @@ pub(crate) struct TextRun<'a> {
 /// (test-only) because this module's own unit tests are most direct to
 /// write and read against a single segment; flatten.rs always goes
 /// through `normalize_merged` directly since it must handle runs of any
-/// length (B16, cold code review).
+/// length.
 #[cfg(test)]
 pub(crate) fn normalize_segment(
     decoded: &str,

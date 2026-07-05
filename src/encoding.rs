@@ -1,5 +1,4 @@
-//! Encoding detection and decoding (MM-14), promoted to a global,
-//! label-driven chain for 0.1.0 (code-atlas 95f5bb4, cold code review B14):
+//! Encoding detection and decoding (MM-14): a global, label-driven chain.
 //!
 //! 1. **BOM sniff**: a UTF-8 BOM is skipped; a UTF-16 LE/BE BOM selects the
 //!    matching `encoding_rs` decoder directly. UTF-16 documents have no
@@ -51,7 +50,7 @@ const UTF16BE_BOM: &[u8] = &[0xFE, 0xFF];
 /// `encoding` is the WHATWG name of the decoder actually used
 /// ([`encoding_rs::Encoding::name`]'s own value, e.g. `"UTF-8"`,
 /// `"EUC-KR"`, `"UTF-16LE"`) -- surfaced publicly as
-/// `ParseResult::encoding` (A15, cold code review) so a consumer working
+/// `ParseResult::encoding` so a consumer working
 /// with the original input bytes knows which decoder to reproduce this
 /// crate's byte offsets with. The lossy fallback (step ⑤) reports
 /// `"UTF-8"`: the output is `String::from_utf8_lossy`'s result, and a

@@ -11,17 +11,12 @@
 //! (for the `#[non_exhaustive]` enums below, the compiler enforces this
 //! with a wildcard-arm requirement; plain structs stay constructible by
 //! downstream test harnesses, so they don't get `#[non_exhaustive]`).
-//! Cold code-review contract audit, code-atlas 8e4ed9a, 2026-07-05.
 
 use serde::{Deserialize, Serialize};
 
 /// Half-open range `[start, end)`: byte offsets into the UTF-8 text as
 /// decoded by this crate (identical to raw input bytes for UTF-8 sources;
-/// see the caveat below for re-encoded documents). B23 (cold code review):
-/// the previous headline -- "in original bytes -- never in the decoded
-/// string" -- directly contradicted its own caveat below for every
-/// non-UTF-8 input, since spans on a re-encoded document *are* offsets
-/// into the decoded string, not the original raw bytes.
+/// see the caveat below for re-encoded documents).
 ///
 /// Caveat: this holds exactly for UTF-8 input, which decoding leaves
 /// byte-for-byte unchanged. For documents decoded from any other
@@ -128,7 +123,7 @@ pub enum DiagCode {
     /// time and has no view of any other file's `<sql>` fragments, so this
     /// is only emitted for MyBatis (`Dialect::Mybatis`), whose namespaces
     /// are per-file and whose refids are typically resolved within them.
-    /// Never emitted for iBatis (B22, cold code review) -- iBatis fragments
+    /// Never emitted for iBatis -- iBatis fragments
     /// are a global cross-file registry by design (any sqlMap can reference
     /// any other sqlMap's `<sql>` by short name), so this heuristic would
     /// flag nearly every legitimate cross-file reference as dangling.
@@ -141,12 +136,10 @@ pub enum DiagCode {
     DanglingRefid,
     BranchLimitExceeded,
     UnknownElement,
-    /// Input exceeded [`crate::MAX_INPUT_BYTES`] (B25, cold code review: was
-    /// only documented as "the 10 MB cap" in prose; now also a public,
-    /// checkable constant). Emitted by both `parse`/`parse_bytes` (with
-    /// `mapper: None`) and `detect_dialect` (with `Dialect::Unknown`)
-    /// *before* any decoding is attempted, so the cap applies to raw input
-    /// size regardless of encoding.
+    /// Input exceeded [`crate::MAX_INPUT_BYTES`]. Emitted by both
+    /// `parse`/`parse_bytes` (with `mapper: None`) and `detect_dialect`
+    /// (with `Dialect::Unknown`) *before* any decoding is attempted, so
+    /// the cap applies to raw input size regardless of encoding.
     OversizeInput,
     /// Recovery rule 3: first value wins, duplicate is reported here.
     DuplicateAttribute,
@@ -159,7 +152,7 @@ pub enum DiagCode {
     /// Recursion depth exceeded 256 nesting levels (dynamic-tag flattening
     /// or resultMap association/discriminator nesting) -- the remaining
     /// subtree is treated as opaque (no text/mapping contribution) rather
-    /// than risk a stack overflow. Cold code review B2/B3, 2026-07-05.
+    /// than risk a stack overflow.
     NestingLimitExceeded,
     /// An `<include>` is the first or last non-whitespace content directly
     /// inside a `<where>`/`<set>`/`<trim>` wrapper. MyBatis expands
@@ -170,14 +163,14 @@ pub enum DiagCode {
     /// re-apply that rule themselves (and treat a wrapper whose only
     /// content is this include as conditional, since the fragment may
     /// expand to nothing). See the README's include section and
-    /// `IncludeTarget`'s rustdoc. Cold code review A7, 2026-07-05.
+    /// `IncludeTarget`'s rustdoc.
     IncludeAtWrapperBoundary,
     /// Forward-compat deserialization fallback: any code string this build
     /// doesn't recognize (e.g. JSON produced by a newer batis-xml version)
     /// lands here instead of failing to deserialize. Never produced by
     /// this crate's own parser -- hidden from docs since it's a
     /// deserialization mechanism, not a diagnostic you'd match on
-    /// intentionally. Cold code-review contract audit, 2026-07-05.
+    /// intentionally.
     #[doc(hidden)]
     #[serde(other)]
     Other,
@@ -274,23 +267,22 @@ pub enum SqlText {
     /// deserialize the whole document. Never produced by this crate's own
     /// flattening -- hidden from docs since it's a deserialization
     /// mechanism, not a shape to construct or match on intentionally.
-    /// Serializes as `{"unrecognized": null}` (A11, cold code review) --
-    /// the original unrecognized key and value aren't retained, only the
-    /// fact that *something* unrecognized was there, but the shape is a
-    /// single-key map like every other `SqlText` variant, so it survives
-    /// its own round trip (serialize then deserialize again) instead of
-    /// becoming unreadable. Acceptable since this crate never produces the
-    /// variant itself -- it only exists transiently after reading a newer
-    /// version's output. Excluded from the JSON Schema (`schemars(skip)`):
-    /// it's not a shape this crate's own output can ever contain, so it
-    /// has no business in the *published* schema. Cold code review A8,
-    /// 2026-07-05.
+    /// Serializes as `{"unrecognized": null}` -- the original unrecognized
+    /// key and value aren't retained, only the fact that *something*
+    /// unrecognized was there, but the shape is a single-key map like
+    /// every other `SqlText` variant, so it survives its own round trip
+    /// (serialize then deserialize again) instead of becoming unreadable.
+    /// Acceptable since this crate never produces the variant itself -- it
+    /// only exists transiently after reading a newer version's output.
+    /// Excluded from the JSON Schema (`schemars(skip)`): it's not a shape
+    /// this crate's own output can ever contain, so it has no business in
+    /// the *published* schema.
     #[doc(hidden)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     Unrecognized,
 }
 
-/// Manual `Serialize` for `SqlText` (A11, cold code review). The
+/// Manual `Serialize` for `SqlText`. The
 /// `#[derive(Serialize)]` this replaced serialized `Unrecognized` (a unit
 /// variant) as the bare JSON string `"unrecognized"` -- valid for an
 /// externally tagged enum, but a shape its own sibling `Deserialize` impl
@@ -341,7 +333,7 @@ impl Serialize for SqlText {
     }
 }
 
-/// Manual `Deserialize` for `SqlText` (A8, cold code review) -- this can't
+/// Manual `Deserialize` for `SqlText` -- this can't
 /// be `#[derive(Deserialize)]`.
 ///
 /// `SqlText` is externally tagged (`{"variants": [...]}` / `{"union":
@@ -464,9 +456,7 @@ pub struct SqlFragment {
     pub includes: Vec<Spanned<IncludeRef>>,
 }
 
-/// A17 (cold code review, major): the include-token textual contract --
-/// a stable part of the v1 output, documented here because nothing in
-/// the public docs said what the token actually looks like before this.
+/// The include-token textual contract -- a stable part of the v1 output.
 ///
 /// Every `<include refid="...">` marker renders into the flattened
 /// [`SqlText`] as a SQL block comment: an opening `/`+`*`, the literal
@@ -525,7 +515,7 @@ pub struct IncludeRef {
 /// already covers "can't be resolved statically" -- there's no third kind
 /// of refid target. Adding a variant here would be a v2.
 ///
-/// ## Expansion-order contract (A7, cold code review)
+/// ## Expansion-order contract
 ///
 /// This crate never substitutes the referenced `<sql>` fragment's text in
 /// place of the `<include>` token -- resolving `IncludeTarget` to actual
