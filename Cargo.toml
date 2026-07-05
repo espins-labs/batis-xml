@@ -28,7 +28,17 @@ categories = ["parser-implementations"]
 # panics" guarantee is a headline claim of this crate, so the test needs
 # real fixtures to mean anything there too. The files are tiny; the
 # package-size cost is negligible.
-exclude = ["CLAUDE.md", ".github/", "rust-toolchain.toml", "release-plz.toml"]
+# examples/k1_harness.rs and q_chain.rs are scratch benchmark harnesses that
+# only run against a private corpus — kept in the repo for reproducibility,
+# but not shipped in the published crate.
+exclude = [
+    "CLAUDE.md",
+    ".github/",
+    "rust-toolchain.toml",
+    "release-plz.toml",
+    "examples/k1_harness.rs",
+    "examples/q_chain.rs",
+]
 
 [package.metadata.docs.rs]
 all-features = true
