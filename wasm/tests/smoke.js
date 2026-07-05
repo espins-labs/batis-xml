@@ -131,8 +131,65 @@ if (typeof ArrayBuffer.prototype.transfer === "function") {
       err.message.includes("detached"),
       `expected the detached-buffer message to say so plainly, got: ${err.message}`,
     );
+    // Not just "mentions detached" (the raw V8 exception -- "Cannot
+    // perform %TypedArray%.prototype.set on a detached ArrayBuffer" --
+    // also does) but this crate's own actionable wording, so this
+    // assertion actually distinguishes the friendly message from the
+    // engine's raw one (see the B42 same-realm case below, which
+    // regressed to the raw message without this distinction).
+    assert(
+      err.message.includes("Pass a live Uint8Array/Buffer instead"),
+      `expected the crate's specific actionable wording, not the raw engine error, got: ${err.message}`,
+    );
   }
   console.log("PASS: parse() gives a friendly message for a detached buffer");
+} else {
+  console.log(
+    "SKIP: ArrayBuffer.prototype.transfer unavailable in this Node version",
+  );
+}
+
+// B42 (cold code review, major): the *same-realm* fast path (a genuine
+// `instanceof Uint8Array` that passes the dyn_ref check directly) used to
+// skip the friendly-message mapping entirely and call `arr.to_vec()`
+// straight away, which throws the JS engine's raw
+// "%TypedArray%.prototype.set on a detached ArrayBuffer" error instead of
+// this crate's specific, actionable message -- only the cross-realm
+// duck-type path above got the friendly wording. Both realms must now
+// give the identical friendly message.
+if (typeof ArrayBuffer.prototype.transfer === "function") {
+  const sameRealmDetached = new Uint8Array(bytes);
+  sameRealmDetached.buffer.transfer();
+  assert(
+    sameRealmDetached instanceof Uint8Array,
+    "test setup: this array must be a genuine same-realm Uint8Array",
+  );
+  try {
+    wasm.parse(sameRealmDetached);
+    assert(false, "expected parse(same-realm detached) to throw");
+  } catch (err) {
+    assert(
+      err instanceof TypeError,
+      `expected a TypeError for a same-realm detached buffer, got ${err}`,
+    );
+    assert(
+      err.message.includes("detached"),
+      `expected the same-realm detached-buffer message to say so plainly, got: ${err.message}`,
+    );
+    // This is the assertion that actually catches B42: before the fix,
+    // the same-realm fast path threw the raw V8 exception ("Cannot
+    // perform %TypedArray%.prototype.set on a detached ArrayBuffer"),
+    // which also happens to contain the substring "detached" -- so the
+    // check above alone does not distinguish the bug from the fix. Only
+    // the crate's own specific wording does.
+    assert(
+      err.message.includes("Pass a live Uint8Array/Buffer instead"),
+      `expected the crate's specific actionable wording (same as the cross-realm case), not the raw engine error, got: ${err.message}`,
+    );
+  }
+  console.log(
+    "PASS: parse() gives the same friendly message for a SAME-realm detached buffer",
+  );
 } else {
   console.log(
     "SKIP: ArrayBuffer.prototype.transfer unavailable in this Node version",

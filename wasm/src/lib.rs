@@ -19,37 +19,31 @@ use wasm_bindgen::JsCast;
 /// accepts Node's `Buffer` -- a `Uint8Array` subclass) turns all of these
 /// into one explicit, actionable `TypeError`.
 fn require_bytes(input: &JsValue, fn_name: &str) -> Result<Vec<u8>, JsValue> {
-    if let Some(arr) = input.dyn_ref::<js_sys::Uint8Array>() {
-        return Ok(arr.to_vec());
-    }
-
-    // B39 (cold code review, minor): `instanceof` is realm-bound -- a
-    // genuine Uint8Array/Buffer constructed in a different JS realm (a
-    // node:vm context, a different iframe/Worker) fails the dyn_ref check
-    // above even though it's byte-shaped identically, so it would
-    // otherwise be misdiagnosed as "not a Uint8Array at all". Duck-type
-    // instead: `byteLength` is how long it is, and `BYTES_PER_ELEMENT
-    // === 1` is specific to Int8Array/Uint8Array/Uint8ClampedArray -- a
-    // plain Array, a string, and a bare ArrayBuffer all lack
-    // `BYTES_PER_ELEMENT` entirely, so this can't accidentally accept the
-    // exact inputs A16 already rejects (re-checked: `"str".BYTES_PER_ELEMENT`
-    // and `[].BYTES_PER_ELEMENT` are both `undefined`).
-    if looks_like_a_byte_typed_array(input) {
-        return match construct_uint8_array_from(input) {
-            Ok(arr) => Ok(arr.to_vec()),
-            // The only realistic way `new Uint8Array(x)` throws for
-            // something that already passed the duck-type check above is
-            // a detached backing ArrayBuffer (e.g. already transferred to
-            // a Worker via `postMessage`) -- give a specific, actionable
-            // message instead of surfacing the constructor's raw JS
-            // exception text verbatim.
-            Err(_) => Err(js_sys::TypeError::new(&format!(
+    // B42 (cold code review, major): this used to fast-path same-realm
+    // `Uint8Array`/`Buffer` inputs straight through `arr.to_vec()`, which
+    // internally calls `%TypedArray%.prototype.set` on the underlying
+    // `ArrayBuffer` -- for a *detached* buffer (e.g. already transferred
+    // to a Worker via `postMessage`, same realm or not) that throws the
+    // raw, unhelpful "%TypedArray%.prototype.set on a detached
+    // ArrayBuffer" engine error, while the cross-realm duck-type path
+    // below already mapped the identical failure mode to a friendly,
+    // actionable message. Same failure, two different error shapes
+    // depending purely on which realm the input happened to come from.
+    //
+    // Fix: both realms now go through the same fallible copy path
+    // (`copy_bytes_from`, `Reflect`-based so it's `catch`-enabled rather
+    // than trapping the wasm instance) and the same friendly-message
+    // mapping on failure -- there's a single code path for "read the
+    // bytes out of a byte-shaped input", not two.
+    if input.dyn_ref::<js_sys::Uint8Array>().is_some() || looks_like_a_byte_typed_array(input) {
+        return copy_bytes_from(input).map_err(|_| {
+            js_sys::TypeError::new(&format!(
                 "{fn_name}() was given a byte array whose contents could not be read -- \
                  its underlying buffer is likely detached (e.g. already transferred to \
                  a Worker via postMessage). Pass a live Uint8Array/Buffer instead."
             ))
-            .into()),
-        };
+            .into()
+        });
     }
 
     Err(js_sys::TypeError::new(&format!(
@@ -59,6 +53,17 @@ fn require_bytes(input: &JsValue, fn_name: &str) -> Result<Vec<u8>, JsValue> {
         describe_js_value(input)
     ))
     .into())
+}
+
+/// Copies bytes out of a byte-shaped input (same-realm `Uint8Array`/
+/// `Buffer`, or a cross-realm duck-typed equivalent) via a fresh,
+/// same-realm `Uint8Array` built through `Reflect.construct` -- see
+/// [`construct_uint8_array_from`]. Used for *both* realms (B42): a
+/// detached backing `ArrayBuffer` makes the `new Uint8Array(x)` call
+/// itself throw, surfaced here as `Err` rather than trapping the wasm
+/// instance, regardless of which realm `input` was constructed in.
+fn copy_bytes_from(input: &JsValue) -> Result<Vec<u8>, JsValue> {
+    construct_uint8_array_from(input).map(|arr| arr.to_vec())
 }
 
 /// Duck-types "is this byte-shaped like a Uint8Array/Buffer" without
