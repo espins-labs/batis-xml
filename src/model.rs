@@ -451,6 +451,56 @@ pub struct SqlFragment {
     pub includes: Vec<Spanned<IncludeRef>>,
 }
 
+/// A17 (cold code review, major): the include-token textual contract --
+/// a stable part of the v1 output, documented here because nothing in
+/// the public docs said what the token actually looks like before this.
+///
+/// Every `<include refid="...">` marker renders into the flattened
+/// [`SqlText`] as a SQL block comment: an opening `/`+`*`, the literal
+/// text `batis:include(`, this struct's own `raw` field, a closing `)`,
+/// then the closing `*`+`/`. `raw` is rendered verbatim -- the unparsed
+/// `refid` attribute value -- **except** any literal `*` immediately
+/// followed by `/` inside it is rewritten to `*` + `_` + `/`, so the
+/// token can never terminate its own enclosing comment early (a `refid`
+/// is untrusted XML attribute content, not something this crate controls
+/// the shape of). This holds regardless of `target`'s classification:
+/// `Local("frag")` renders the comment around `frag` verbatim;
+/// `Qualified { ns: "otherNs", id: "frag" }` renders the *original,
+/// still-dotted* text `otherNs.frag` (`raw` is the whole unparsed
+/// attribute value; `ns`/`id` are just it split on the last dot for
+/// convenience, not a separate rendering); `Dynamic` renders the literal,
+/// unresolved `${...}` text as-is.
+///
+/// **Locating tokens**: since the token's opening (`/`+`*` followed by
+/// the literal text `batis:include(`) is a fixed prefix, a plain
+/// substring search over the flattened SQL text finds every token
+/// directly -- no need to reconstruct it from `raw` first. Each token's
+/// position correlates 1:1 with one entry in the owning
+/// [`Statement::includes`]/[`SqlFragment::includes`] list: match by
+/// `Spanned::span`, which is the *original XML* span of the `<include>`
+/// element (not a position in the flattened text) -- the same span a
+/// [`DiagCode::IncludeAtWrapperBoundary`] diagnostic reports when this
+/// token sits at a `<where>`/`<set>`/`<trim>` boundary (see that
+/// variant's own doc comment, and the README's "Include expansion
+/// order" section, for the substitution contract itself).
+///
+/// **Substituting a fragment with multiple variants**: a referenced
+/// `<sql>` fragment is itself flattened to a [`SqlText`], which may be
+/// `Variants` (several condition-gated alternatives) rather than one
+/// fixed string. There is no single deterministic substitution in that
+/// case -- the fragment's *own* active variant depends on the same
+/// runtime parameter state as the enclosing statement's variant does, so
+/// a consumer substituting fragment text into one variant of the parent
+/// statement must pick the matching variant of the fragment (by
+/// `conditions`), not an arbitrary one (e.g. `variants[0]`).
+///
+/// **Document order**: [`Mapper::statements`] (and `fragments`/
+/// `result_maps`) preserve source document order -- safe to assume when
+/// resolving forward/backward references across statements in one file.
+///
+/// **Diagnostic messages are not a stable matching surface.** `message`
+/// strings may be reworded between versions without that being a
+/// breaking change; match on [`Diagnostic::code`] instead.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IncludeRef {

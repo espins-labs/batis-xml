@@ -51,6 +51,51 @@ for stmt in &result.mapper.as_ref().unwrap().statements {
 you the raw `refid` plus a best-effort `IncludeTarget`, but resolving and
 substituting the referenced `<sql>` fragment's text is the consumer's job.
 
+The marker's textual form in the flattened SQL is a **stable v1
+contract**: the literal, fixed-prefix comment token
+`/* batis:include(<raw>) */`, where `<raw>` is `IncludeRef.raw` verbatim
+(with any literal `*/` replaced by `*_/` so it can't terminate the
+comment early) — regardless of whether the target classified as `Local`,
+`Qualified` (rendered with its original dot still in it, e.g.
+`otherNs.frag`), or `Dynamic` (the unresolved `${...}` text rendered
+as-is). A worked example:
+
+```rust,ignore
+// mapper.statements[0].sql (Variants) contains, verbatim:
+//   "SELECT * FROM widget WHERE /* batis:include(widgetFilter) */"
+// mapper.statements[0].includes == [Spanned { value: IncludeRef {
+//   raw: "widgetFilter", target: Local("widgetFilter") }, span: ... }]
+//
+// To substitute: find the referenced fragment by id, flatten *it* too
+// (it has its own SqlText), then string-replace the fixed-prefix token:
+let token = "/* batis:include(widgetFilter) */";
+let fragment_sql = "status = 'ACTIVE'"; // the matching SqlVariant's text
+let substituted = sql_text.replace(token, fragment_sql);
+```
+
+Because the token's prefix (`/* batis:include(`) is fixed, a plain
+substring search finds every token directly — you don't need to
+reconstruct it from `raw` first, though doing so (as above) is how you
+know *which* token belongs to *which* `IncludeRef` when a statement has
+more than one `<include>`. Each entry in `Statement.includes`/
+`SqlFragment.includes` carries a `span` — the **original XML** span of
+that `<include>` element, not a position in the flattened text — which is
+the same span a `DiagCode::IncludeAtWrapperBoundary` diagnostic reports
+when that particular token sits at a wrapper boundary (see below).
+
+If the fragment you're substituting is itself `SqlText::Variants` (has
+its own conditions), there's no single deterministic substitution:
+plug in the fragment variant whose `conditions` match the same runtime
+parameter state as the *enclosing* statement's variant you're
+substituting into — not an arbitrary one like `variants[0]`.
+
+Two related contract notes, easy to miss: `Mapper::statements` (and
+`fragments`/`result_maps`) preserve source document order — safe to rely
+on when resolving references across statements in one file. And
+diagnostic `message` strings are **not** a stable matching surface (they
+may be reworded between versions without that being a breaking change) —
+always match on `Diagnostic::code`, never on message text.
+
 MyBatis (and iBatis) expand `<include>` **before** evaluating
 `<where>`/`<set>`/`<trim>` dynamic semantics, so a wrapper's leading
 `AND`/`OR` strip or trailing-comma strip runs against the fragment's

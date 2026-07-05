@@ -85,15 +85,50 @@ const qualifiedName = statement.database_id
 **(d) `<include>` expands *before* `<where>`/`<set>`/`<trim>` in MyBatis/
 iBatis — this crate doesn't expand it at all.** `IncludeRef` gives you the
 raw `refid` plus a best-effort `IncludeTarget`; substituting the
-referenced `<sql>` fragment's text in is on you. If you splice fragment
-text in *after* flattening (rather than before, like the real engines
-do), redo the wrapper's own cleanup against that substituted text:
-re-apply the leading-AND/OR strip or trailing-comma strip when the
-include token was first/last inside the wrapper, and treat a wrapper
-whose only content is an include token as conditional (the fragment
-might expand to nothing). `result.diagnostics` carries
-`include_at_wrapper_boundary` for every spot this applies to — see the
-core crate's README ("Include expansion order") for the full contract.
+referenced `<sql>` fragment's text in is on you.
+
+The marker's textual form is a **stable v1 contract**: it renders in the
+flattened SQL as the literal, fixed-prefix comment token
+`` /* batis:include(<raw>) */ ``, where `<raw>` is `IncludeRef.raw`
+verbatim (any literal `*/` inside it is replaced with `*_/` so it can't
+terminate the comment early) — the same whether the target is `Local`,
+`Qualified` (rendered with its original dot, e.g. `otherNs.frag`), or
+`Dynamic` (the unresolved `${...}` text rendered as-is). Since the prefix
+is fixed, `sqlText.indexOf("/* batis:include(")` (or a global regex) finds
+every token directly; match each one to its `Statement.includes`/
+`SqlFragment.includes` entry by reconstructing the exact token string
+from that entry's `raw` field:
+
+```js
+for (const inc of statement.includes) {
+  const token = `/* batis:include(${inc.value.raw.replaceAll("*/", "*_/")}) */`;
+  sqlText = sqlText.replace(token, resolveFragmentText(inc.value)); // your own lookup
+}
+```
+
+If the fragment you're substituting is itself multi-variant
+(`sql.variants` on the fragment's own flattened output has more than one
+entry), there's no single deterministic substitution — pick the
+fragment's variant whose `conditions` match the same parameter state as
+the *enclosing* statement's variant you're substituting into, not
+`variants[0]` arbitrarily.
+
+If you splice fragment text in *after* flattening (rather than before,
+like the real engines do), redo the wrapper's own cleanup against that
+substituted text: re-apply the leading-AND/OR strip or trailing-comma
+strip when the include token was first/last inside the wrapper, and
+treat a wrapper whose only content is an include token as conditional
+(the fragment might expand to nothing). `result.diagnostics` carries
+`include_at_wrapper_boundary` for every spot this applies to — each
+diagnostic's `span` is the same original-XML span as the matching
+`includes[]` entry's `span` (not a position in the flattened text) — see
+the core crate's README ("Include expansion order") for the full
+contract. As with any diagnostic, match on `code`
+(`"include_at_wrapper_boundary"`), never on `message` text — messages
+may be reworded between versions without that being a breaking change.
+
+One more ordering guarantee worth relying on: `result.mapper.statements`
+(and `fragments`/`result_maps`) preserve the source document's order.
 
 ## One more thing
 
