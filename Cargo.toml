@@ -16,7 +16,18 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/espins-labs/batis-xml"
 keywords = ["mybatis", "ibatis", "sql", "parser", "xml"]
 categories = ["parser-implementations"]
-exclude = ["fixtures/hostile/*"]
+# CLAUDE.md is an internal agent working agreement, not user-facing; .github/
+# is CI/issue-template plumbing. fixtures/hostile/* is deliberately NOT
+# excluded (cold review B11): it used to be, but that broke
+# hostile_never_panics for anyone building/testing straight from the
+# published crate source (e.g. downstream distro packagers) -- the "never
+# panics" guarantee is a headline claim of this crate, so the test needs
+# real fixtures to mean anything there too. The files are tiny; the
+# package-size cost is negligible.
+exclude = ["CLAUDE.md", ".github/"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 # wasm constraint: pure-Rust dependencies only (keep wasm32-unknown-unknown clean)
 [dependencies]

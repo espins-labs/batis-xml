@@ -59,8 +59,10 @@ node wasm/tests/smoke.js   # smoke test against the built pkg/
 - patches `pkg/package.json`'s name from the Cargo package name
   (`batis-xml-wasm`, matching this crate's own crates.io identity -- see
   `release-plz.toml`, excluded from crates.io releases since npm is its
-  channel) to the verified-available npm name (`batis-xml`), and adds
-  `schema.d.ts` to its `files` list
+  channel) to the verified-available npm name (`batis-xml`), adds
+  `schema.d.ts`/`LICENSE-MIT`/`LICENSE-APACHE` to its `files` list, and
+  writes an `exports` map (`"."` -> the JS + its `.d.ts`; `"./schema"` ->
+  `schema.d.ts` only, a types-only subpath with no runtime file)
 
 This produces `wasm/pkg/` (gitignored -- rebuilt on demand, not committed)
 ready for `npm pack`; this repo does not automate or run `npm publish`.
@@ -69,6 +71,13 @@ the three sharpest edges for npm consumers: feed raw bytes not
 host-pre-decoded strings, spans are UTF-8 byte offsets not JS indices, and
 build qualified names as `ns.id@databaseId` to avoid dual-dialect
 collisions.
+
+**npm version bump is manual** -- keep it in lockstep with the core
+crate's minor releases (e.g. core `0.2.0` ships alongside npm `0.2.0`),
+since the wasm crate path-depends on an exact `version = "0.1.0"`
+constraint on `batis-xml` in `wasm/Cargo.toml`. `release-plz` doesn't
+publish this one (see above); bumping `wasm/Cargo.toml`'s version is a
+manual step when the core crate's public API changes.
 
 ## Pre-publish checklist
 

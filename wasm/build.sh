@@ -24,6 +24,18 @@ for (const f of ["schema.d.ts", "LICENSE-MIT", "LICENSE-APACHE"]) {
     pkg.files.push(f);
   }
 }
+// "." is the normal JS+types entry point; "./schema" is a types-only
+// subpath (no runtime file -- schema.d.ts is ambient declarations) for
+// `import type { ParseResult } from "batis-xml/schema"`.
+pkg.exports = {
+  ".": {
+    types: "./batis_xml_wasm.d.ts",
+    default: "./batis_xml_wasm.js",
+  },
+  "./schema": {
+    types: "./schema.d.ts",
+  },
+};
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 NODE
 

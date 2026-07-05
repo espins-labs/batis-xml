@@ -15,6 +15,13 @@ TypeScript consumers: `schema.d.ts` ships in this package (generated from
 `schema/batis-xml.v1.json`, drift-checked in CI) —
 `import type { ParseResult } from "batis-xml/schema"`.
 
+**Node.js target only — no browser/bundler build yet.** This package is
+built with `wasm-pack --target nodejs` (CommonJS, loads the `.wasm` via
+`fs.readFileSync` at require time). It will not work as-is in a browser
+or with a bundler expecting `--target web`/`--target bundler` output
+(`fetch`-based instantiation, ESM). That's a separate build target to
+add later, not a difference in the Rust source.
+
 ## Three things that will bite you
 
 **(a) Feed raw bytes — never a host-pre-decoded string.** Always pass the

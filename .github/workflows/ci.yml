@@ -65,3 +65,16 @@ jobs:
       # Remove continue-on-error at that point.
       - run: cargo semver-checks
         continue-on-error: true
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      # cargo-hack reads rust-version from Cargo.toml and runs the check
+      # with that exact toolchain via rustup (core crate only, per
+      # default-members -- the wasm crate's wasm-bindgen dependency isn't
+      # part of this promise).
+      - run: rustup toolchain install 1.75 --profile minimal
+      - run: cargo hack check --rust-version
