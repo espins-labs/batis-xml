@@ -8,6 +8,7 @@
 //! through a review-and-approve flow (insta-style) once the parser lands,
 //! then locked against regressions.
 
+use batis_xml::ParseResult;
 use std::fs;
 use std::path::Path;
 
@@ -40,6 +41,43 @@ fn run_dir(dir: &str) {
         checked > 0,
         "no {dir} conformance pairs found — did the fixtures move?"
     );
+}
+
+/// A8 (cold code review): SqlText's manual Deserialize impl must round-trip
+/// every real shape this crate's own flattening actually produces
+/// (Variants/Union), across the whole conformance corpus -- not just the
+/// hand-picked unit-test cases in model.rs. Serialize -> deserialize ->
+/// re-serialize must reproduce the exact same JSON, i.e. no fixture's
+/// SqlText should ever fall into the Unrecognized fallback.
+#[test]
+fn sql_text_round_trips_through_serde_across_the_whole_corpus() {
+    let mut checked = 0;
+    for dir in ["mybatis", "ibatis"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join(dir);
+        for entry in fs::read_dir(&root).expect("fixture dir exists") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("xml") {
+                continue;
+            }
+            let input = fs::read(&path).expect("read fixture xml");
+            let result = batis_xml::parse_bytes(&input);
+            let json = serde_json::to_string(&result).expect("serialize");
+            let round_tripped: ParseResult =
+                serde_json::from_str(&json).expect("deserializes back");
+            let json_again = serde_json::to_string(&round_tripped).expect("re-serialize");
+            assert_eq!(
+                json,
+                json_again,
+                "SqlText round-trip drifted for {}",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    println!("sql_text round-trip: {checked} files checked");
+    assert!(checked > 0, "no fixtures found for the round-trip check");
 }
 
 #[test]

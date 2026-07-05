@@ -2349,6 +2349,7 @@ mod tests {
         match sql {
             SqlText::Variants(v) => v,
             SqlText::Union { .. } => panic!("expected Variants, got Union"),
+            SqlText::Unrecognized => panic!("expected Variants, got Unrecognized"),
         }
     }
 
@@ -2651,6 +2652,7 @@ mod tests {
         match &mapper.statements[0].sql {
             SqlText::Union { branch_count, .. } => assert_eq!(*branch_count, 33),
             SqlText::Variants(_) => panic!("expected Union at 33 branches"),
+            SqlText::Unrecognized => panic!("expected Union, got Unrecognized"),
         }
         assert!(result
             .diagnostics
