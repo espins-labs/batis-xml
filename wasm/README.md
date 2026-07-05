@@ -27,11 +27,14 @@ add later, not a difference in the Rust source.
 **(a) Feed raw bytes — never a host-pre-decoded string.** Always pass the
 file's original `Buffer`/`Uint8Array` to `parse`/`detect`, not a string
 you already decoded (e.g. `fs.readFileSync(path, "utf-8")` then
-re-encoded). `batis-xml` detects UTF-8 vs. EUC-KR/CP949 itself — feeding
-it bytes that already went through a host UTF-8 decoder defeats that
-detection, since a genuinely non-UTF-8 file would already have been
-mangled (replacement characters) before `batis-xml` ever sees it. Read
-files as bytes and stay in bytes until you call in.
+re-encoded). `batis-xml` detects the encoding itself: UTF-8 first, then
+BOM/declared-label-driven (all WHATWG encodings via `encoding_rs` —
+Shift_JIS, GB18030, Big5, UTF-16, …), with an EUC-KR heuristic for
+declaration-less legacy files; anything else decodes lossily with a
+diagnostic. Feeding it bytes that already went through a host UTF-8
+decoder defeats all of that, since a genuinely non-UTF-8 file would
+already have been mangled (replacement characters) before `batis-xml`
+ever sees it. Read files as bytes and stay in bytes until you call in.
 
 **(b) Spans are UTF-8 byte offsets — not JS string indices.** Every
 `ByteSpan { start, end }` in the JSON indexes into UTF-8 *bytes* of the
