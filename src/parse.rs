@@ -2305,6 +2305,27 @@ mod tests {
     }
 
     #[test]
+    fn include_refid_containing_star_slash_does_not_terminate_the_comment_early() {
+        // Cold code review B15: a refid containing "*/" would otherwise
+        // close the /* batis:include(...) */ comment early, corrupting
+        // the rest of the rendered SQL text.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT <include refid="a*/b"/> FROM widget</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(
+            vs[0].text.text,
+            "SELECT /* batis:include(a*_/b) */ FROM widget"
+        );
+        // The IncludeRef.raw itself is untouched -- only the rendered
+        // comment token is sanitized.
+        assert_eq!(mapper.statements[0].includes[0].value.raw, "a*/b");
+    }
+
+    #[test]
     fn mm_06_fragment_sql_is_also_flattened() {
         let source = r#"<mapper namespace="x">
             <sql id="cond"><if test="a != null"> AND a = #{a}</if></sql>

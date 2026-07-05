@@ -818,7 +818,15 @@ fn assemble(pieces: &[Piece]) -> SqlString {
             }
             Piece::Include { raw, span } => {
                 push_span_entry(&mut span_map, text.len() as u32, span.start);
-                text.push_str(&format!("/* batis:include({raw}) */"));
+                // Cold code review B15: a refid containing "*/" (however
+                // contrived) would otherwise terminate this SQL comment
+                // early, corrupting the rest of the rendered text. `raw`
+                // is untrusted XML attribute content, not something this
+                // crate controls the shape of.
+                text.push_str(&format!(
+                    "/* batis:include({}) */",
+                    raw.replace("*/", "*_/")
+                ));
             }
             Piece::Prepend { value, span } => {
                 push_span_entry(&mut span_map, text.len() as u32, span.start);
