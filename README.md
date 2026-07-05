@@ -33,6 +33,39 @@ mapper XML ──▶ batis-xml ──▶ { statements, flattened SQL variants,
 - **Pure Rust**: builds clean for `wasm32-unknown-unknown` — usable from
   Node/TypeScript via wasm, and from the JVM via wasm runtimes.
 
+## Installation
+
+**Rust** (crates.io):
+
+```toml
+[dependencies]
+batis-xml = "0.1"
+```
+
+or `cargo add batis-xml`. The optional `schema` feature adds
+`schemars`-generated JSON Schema types (the pinned schema itself ships in
+`schema/batis-xml.v1.json` regardless).
+
+**Node / TypeScript** (npm): the same parser compiled to WebAssembly, same
+JSON output, published as [`batis-xml`](https://www.npmjs.com/package/batis-xml):
+
+```bash
+npm install batis-xml
+```
+
+Feed it raw file bytes (a `Buffer`/`Uint8Array`, never a pre-decoded
+string) — the package README documents the byte-span and encoding caveats.
+
+**Build from source**:
+
+```bash
+git clone https://github.com/espins-labs/batis-xml
+cd batis-xml
+cargo test                  # core crate (MSRV 1.79)
+./wasm/build.sh             # wasm package -> wasm/pkg (needs wasm-pack + Node)
+node wasm/tests/smoke.js
+```
+
 ## Example
 
 ```rust,no_run
