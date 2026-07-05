@@ -238,6 +238,19 @@ pub(crate) fn parse_str(source: &str) -> ParseResult {
                 last_err_pos = Some(pos);
                 diagnostics.push(recovery_diagnostic(&err, pos));
             }
+            // B44 (cold code review, major): a bare `&` before the root
+            // element (e.g. `&<mapper ...>`) used to fall into the
+            // catch-all arm below and vanish with zero diagnostics -- see
+            // `dangling_amp_diagnostic`'s doc comment.
+            Ok(Event::Text(text)) => {
+                let decoded = text
+                    .decode()
+                    .map(|d| d.into_owned())
+                    .unwrap_or_else(|_| source[start as usize..].to_string());
+                if let Some(diag) = dangling_amp_diagnostic(&decoded, start as usize) {
+                    diagnostics.push(diag);
+                }
+            }
             _ => continue,
         }
     }
@@ -614,6 +627,24 @@ fn build_mapper(
                             ),
                         });
                     }
+                }
+            }
+            // B44 (cold code review, major): a bare `&` between sibling
+            // statements at mapper level (e.g. `<mapper>& stray
+            // <select...>`) used to fall into the catch-all arm below
+            // and vanish with zero diagnostics -- see
+            // `dangling_amp_diagnostic`'s doc comment. A dangling amp
+            // *inside* a statement body is still diagnosed exactly once
+            // by `capture_body` alone (that Text event is consumed
+            // there, never reaches this loop), so this doesn't double up
+            // with B36's dedup -- it's a different layer entirely.
+            Ok(Event::Text(text)) => {
+                let decoded = text
+                    .decode()
+                    .map(|d| d.into_owned())
+                    .unwrap_or_else(|_| source[child_start as usize..].to_string());
+                if let Some(diag) = dangling_amp_diagnostic(&decoded, child_start as usize) {
+                    diagnostics.push(diag);
                 }
             }
             _ => continue,
@@ -1411,6 +1442,42 @@ fn unclosed_tag(start: usize, end: usize, message: impl Into<String>) -> Diagnos
     }
 }
 
+/// B44 (cold code review, major): A18's dangling-`&` diagnosis lived only
+/// in `capture_body` (inside a statement's own body), so a bare `&`
+/// encountered at mapper level -- before the root element, or between
+/// sibling statements -- fell through those loops' catch-all `_ =>
+/// continue` arm and produced *zero* diagnostics (pre-A18, the same input
+/// at least produced a recovery diagnostic, since `allow_dangling_amp`
+/// wasn't enabled yet). Every anomaly must become a `Diagnostic`
+/// (CLAUDE.md rule 4) regardless of which layer of the tree it's in.
+///
+/// `text_start` is the byte offset the enclosing `Ok(Event::Text(text))`
+/// arm's `reader.buffer_position()` was read *before* consuming the
+/// event (i.e. where the Text event itself begins) -- quick-xml starts a
+/// fresh Text event exactly at a dangling `&` (never mid-run, same
+/// property `capture_body`'s A18 comment relies on), so this is also
+/// exactly the `&`'s own byte offset when `decoded` starts with one.
+///
+/// Returns `None` for ordinary text (the overwhelmingly common case: ordinary
+/// whitespace/comments between tags), so call sites only pay for a
+/// `Vec` push when there's actually an anomaly.
+///
+/// Span is 1 byte per B43 (`start..start+1`, just the `&`) -- matches
+/// `capture_body`'s narrowed span, not the old fat one.
+fn dangling_amp_diagnostic(decoded: &str, text_start: usize) -> Option<Diagnostic> {
+    if !decoded.starts_with('&') {
+        return None;
+    }
+    Some(Diagnostic {
+        code: DiagCode::InvalidEntity,
+        span: Some(ByteSpan {
+            start: text_start as u32,
+            end: text_start as u32 + 1,
+        }),
+        message: "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text".to_string(),
+    })
+}
+
 /// MM-13: classifies a reader error for a recovery diagnostic. No new
 /// `DiagCode` is warranted for this — `UnclosedTag` already covers "the
 /// tag structure around here is broken"; only the message differs between
@@ -1519,29 +1586,17 @@ pub(crate) fn capture_body(
                 // `GeneralRef` arm below) -- MM-08's raw-text-kept-verbatim
                 // rule means the SQL text, and any placeholder later in the
                 // same run, still survives untouched.
-                if decoded.starts_with('&') {
-                    // B43 (cold code review): the diagnostic's span used
-                    // to be `raw_span` -- the *whole* Text event, from the
-                    // dangling `&` all the way to wherever quick-xml next
-                    // cut the event (the next `<`/entity reference/EOF).
-                    // That fat span could (and did, in the shipped
-                    // `bare_ampersand_in_text` fixture) swallow dozens of
-                    // bytes of perfectly ordinary SQL text into an
-                    // "invalid entity" span, freezing incidental tokenizer
-                    // cut points into the conformance corpus. The anomaly
-                    // is exactly one byte -- the `&` itself -- so the span
-                    // should be exactly one byte too. `raw_span.start` is
-                    // already the `&`'s own offset (quick-xml starts a
-                    // fresh Text event exactly there, per the A18 comment
-                    // above), so only `end` needs narrowing.
-                    diagnostics.push(Diagnostic {
-                        code: DiagCode::InvalidEntity,
-                        span: Some(ByteSpan {
-                            start: raw_span.start,
-                            end: raw_span.start + 1,
-                        }),
-                        message: "dangling '&' without a terminating ';' is not a well-formed entity reference; kept as literal text".to_string(),
-                    });
+                // B43/B44 (cold code review): span narrowed to exactly
+                // the 1-byte `&` (see `dangling_amp_diagnostic`'s doc
+                // comment) -- the whole-Text-event span used to swallow
+                // dozens of bytes of perfectly ordinary SQL text (the
+                // shipped `bare_ampersand_in_text` fixture) into an
+                // "invalid entity" span. Shared with the mapper-level
+                // checks in `parse_str`/`build_mapper` (B44) so a
+                // dangling amp is diagnosed identically regardless of
+                // which layer of the tree it's in.
+                if let Some(diag) = dangling_amp_diagnostic(&decoded, raw_span.start as usize) {
+                    diagnostics.push(diag);
                 }
                 segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
             }
@@ -2940,6 +2995,101 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.code == DiagCode::InvalidEntity));
+    }
+
+    #[test]
+    fn b44_dangling_amp_before_root_is_diagnosed() {
+        // B44 (cold code review, major): A18's dangling-`&` diagnosis
+        // lived only in capture_body (inside a statement body) -- a bare
+        // `&` before the root element used to fall into parse_str's
+        // top-level catch-all arm and vanish with zero diagnostics.
+        let source = "&<mapper namespace=\"x\"></mapper>";
+        let result = parse_str(source);
+        assert_eq!(result.dialect, Dialect::Mybatis);
+        assert!(result.mapper.is_some(), "the root element must still parse");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::InvalidEntity)
+                .count(),
+            1,
+            "expected exactly one InvalidEntity diagnostic, got {:?}",
+            result.diagnostics
+        );
+        let diag = result
+            .diagnostics
+            .iter()
+            .find(|d| d.code == DiagCode::InvalidEntity)
+            .unwrap();
+        let span = diag
+            .span
+            .expect("dangling amp diagnostic must carry a span");
+        assert_eq!(span.start, 0);
+        assert_eq!(span.end, 1, "span must be exactly the 1-byte '&' (B43)");
+    }
+
+    #[test]
+    fn b44_dangling_amp_between_mapper_level_statements_is_diagnosed() {
+        // B44: a bare `&` between sibling statements at mapper level
+        // (not inside any statement's own body) used to fall into
+        // build_mapper's catch-all arm and vanish with zero diagnostics.
+        let source = r#"<mapper namespace="x"><select id="a">SELECT 1</select>& stray<select id="b">SELECT 2</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(
+            mapper.statements.len(),
+            2,
+            "both statements must still be captured despite the stray '&' between them"
+        );
+        assert_eq!(mapper.statements[0].id.as_ref().unwrap().value, "a");
+        assert_eq!(mapper.statements[1].id.as_ref().unwrap().value, "b");
+
+        let amp_pos = source.find('&').unwrap() as u32;
+        let amp_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::InvalidEntity)
+            .collect();
+        assert_eq!(
+            amp_diags.len(),
+            1,
+            "expected exactly one InvalidEntity diagnostic for the mapper-level '&', got {:?}",
+            result.diagnostics
+        );
+        let span = amp_diags[0]
+            .span
+            .expect("dangling amp diagnostic must carry a span");
+        assert_eq!(span.start, amp_pos);
+        assert_eq!(
+            span.end,
+            amp_pos + 1,
+            "span must be exactly the 1-byte '&' (B43)"
+        );
+    }
+
+    #[test]
+    fn b44_dangling_amp_inside_statement_body_is_not_double_diagnosed() {
+        // B44: the mapper-level check added alongside capture_body's
+        // existing one must not double-diagnose a dangling amp that's
+        // actually inside a statement's own body -- that Text event is
+        // consumed by capture_body itself and never reaches build_mapper's
+        // loop at all, so there's naturally only one diagnosis, not a
+        // B36-dedup-dependent one.
+        let source = r#"<mapper namespace="x"><select id="a">a & b</select></mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 1);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::InvalidEntity)
+                .count(),
+            1,
+            "expected exactly one InvalidEntity diagnostic for the in-body '&', got {:?}",
+            result.diagnostics
+        );
     }
 
     #[test]
