@@ -218,9 +218,15 @@ pub struct Statement {
 /// `#[non_exhaustive]`: a third fallback representation is plausible
 /// future work, and consumers matching exhaustively today must not break
 /// at compile time if one's added.
+// A11 (cold code review): `Serialize`/`Deserialize` are hand-rolled below
+// (see their impls' own doc comments), but `#[serde(rename_all =
+// "snake_case")]` stays here anyway -- `schemars` reads it directly to
+// decide the *schema's* variant-name casing ("variants"/"union", matching
+// what the manual `Serialize` impl actually produces), independent of
+// whether serde's own derive macros are present.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", serde(rename_all = "snake_case"))]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum SqlText {
     Variants(Vec<SqlVariant>),
@@ -240,10 +246,13 @@ pub enum SqlText {
     /// deserialize the whole document. Never produced by this crate's own
     /// flattening -- hidden from docs since it's a deserialization
     /// mechanism, not a shape to construct or match on intentionally.
-    /// Serializing it back out degrades: the original unrecognized key and
-    /// value aren't retained, only the fact that *something* unrecognized
-    /// was there. Acceptable since this crate never produces the variant
-    /// itself -- it only exists transiently after reading a newer
+    /// Serializes as `{"unrecognized": null}` (A11, cold code review) --
+    /// the original unrecognized key and value aren't retained, only the
+    /// fact that *something* unrecognized was there, but the shape is a
+    /// single-key map like every other `SqlText` variant, so it survives
+    /// its own round trip (serialize then deserialize again) instead of
+    /// becoming unreadable. Acceptable since this crate never produces the
+    /// variant itself -- it only exists transiently after reading a newer
     /// version's output. Excluded from the JSON Schema (`schemars(skip)`):
     /// it's not a shape this crate's own output can ever contain, so it
     /// has no business in the *published* schema. Cold code review A8,
@@ -251,6 +260,57 @@ pub enum SqlText {
     #[doc(hidden)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     Unrecognized,
+}
+
+/// Manual `Serialize` for `SqlText` (A11, cold code review). The
+/// `#[derive(Serialize)]` this replaced serialized `Unrecognized` (a unit
+/// variant) as the bare JSON string `"unrecognized"` -- valid for an
+/// externally tagged enum, but a shape its own sibling `Deserialize` impl
+/// (see below) can't read back: `visit_map` is never called for a bare
+/// string, so re-reading a document containing `SqlText::Unrecognized`
+/// failed deserialization entirely. The one property this forward-compat
+/// mechanism *must* have -- surviving a read-then-write-then-read round
+/// trip -- was silently broken (e.g. a cache or pipeline that stores
+/// parsed output and reads it back would lose the whole document, not just
+/// degrade the one field). Serializes every variant as the same
+/// single-key-map shape `#[derive(Serialize)]` already produced for
+/// `Variants`/`Union` (so existing fixtures/consumers see no change there),
+/// plus `{"unrecognized": null}` for `Unrecognized` specifically.
+impl Serialize for SqlText {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        match self {
+            SqlText::Variants(variants) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("variants", variants)?;
+                map.end()
+            }
+            SqlText::Union { text, branch_count } => {
+                #[derive(Serialize)]
+                struct UnionRepr<'a> {
+                    text: &'a SqlString,
+                    branch_count: u32,
+                }
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry(
+                    "union",
+                    &UnionRepr {
+                        text,
+                        branch_count: *branch_count,
+                    },
+                )?;
+                map.end()
+            }
+            SqlText::Unrecognized => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("unrecognized", &())?;
+                map.end()
+            }
+        }
+    }
 }
 
 /// Manual `Deserialize` for `SqlText` (A8, cold code review) -- this can't
@@ -505,6 +565,51 @@ mod tests {
         let json = r#"{"totally_new_shape":42}"#;
         let sql: SqlText = serde_json::from_str(json).expect("deserializes");
         let round_tripped = serde_json::to_string(&sql).expect("serializes");
-        assert_eq!(round_tripped, "\"unrecognized\"");
+        assert_eq!(round_tripped, r#"{"unrecognized":null}"#);
+    }
+
+    #[test]
+    fn sql_text_unrecognized_survives_a_full_serialize_deserialize_round_trip() {
+        // A11 (cold code review, major): the whole point of a forward-compat
+        // fallback is that it survives being written out and read back in
+        // (e.g. a cache or pipeline storing this crate's own JSON output) --
+        // the old bare-string `"unrecognized"` serialization broke exactly
+        // that, since the deserializer only ever calls visit_map.
+        let json = r#"{"totally_new_shape":42}"#;
+        let sql: SqlText = serde_json::from_str(json).expect("first deserialize");
+        let serialized = serde_json::to_string(&sql).expect("serialize");
+        let round_tripped: SqlText =
+            serde_json::from_str(&serialized).expect("second deserialize must not fail");
+        assert_eq!(round_tripped, SqlText::Unrecognized);
+    }
+
+    #[test]
+    fn sql_text_variants_and_union_serialize_shape_is_unchanged_by_the_manual_impl() {
+        // The manual Serialize impl (A11) must reproduce the exact same
+        // externally tagged shape #[derive(Serialize)] already produced for
+        // these two variants -- only Unrecognized's shape should change.
+        let variants = SqlText::Variants(vec![SqlVariant {
+            text: SqlString {
+                text: "SELECT 1".to_string(),
+                span_map: vec![(0, 0)],
+            },
+            conditions: vec![],
+        }]);
+        assert_eq!(
+            serde_json::to_string(&variants).unwrap(),
+            r#"{"variants":[{"text":{"text":"SELECT 1","span_map":[[0,0]]},"conditions":[]}]}"#
+        );
+
+        let union = SqlText::Union {
+            text: SqlString {
+                text: "SELECT 1".to_string(),
+                span_map: vec![(0, 0)],
+            },
+            branch_count: 33,
+        };
+        assert_eq!(
+            serde_json::to_string(&union).unwrap(),
+            r#"{"union":{"text":{"text":"SELECT 1","span_map":[[0,0]]},"branch_count":33}}"#
+        );
     }
 }
