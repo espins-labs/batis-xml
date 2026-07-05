@@ -430,7 +430,27 @@ impl<'de> Deserialize<'de> for SqlText {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlVariant {
     pub text: SqlString,
-    /// The `test` expressions (verbatim) that activate this variant.
+    /// The `test` expressions (verbatim) that activate this variant --
+    /// positive-only, and not a full boolean formula.
+    ///
+    /// Only the `test` conditions of `<if>`/dynamic tags whose branch is
+    /// actually *taken* in this variant's path through the tag tree are
+    /// recorded here, in document order. An `<if>`'s *not-taken* path
+    /// contributes an alternative with `conditions: []` (empty) -- which
+    /// is indistinguishable, at the type level, from a statement that had
+    /// no `<if>` at all. This is by design (recording "this condition was
+    /// false" would require inventing a negated-expression representation
+    /// this crate doesn't have a use for elsewhere), but it means an empty
+    /// `conditions` list is not itself proof that a variant is
+    /// unconditional -- a consumer that needs that distinction has to
+    /// correlate against the source XML's own dynamic-tag structure.
+    ///
+    /// `SqlText::Variants` as a whole lists *candidate* SQL shapes, not a
+    /// runtime guarantee: this crate has no visibility into actual
+    /// parameter values, so it cannot say which variant (if any single
+    /// one) will execute for a given call -- only that these are the
+    /// shapes the dynamic-tag tree can produce, gated by the conditions
+    /// listed here.
     pub conditions: Vec<String>,
 }
 
