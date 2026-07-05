@@ -2811,6 +2811,22 @@ mod tests {
     }
 
     #[test]
+    fn b17_set_strips_leading_comma_too() {
+        // MyBatis 3.4.5+'s SetSqlNode uses prefixOverrides="," in addition
+        // to suffixOverrides="," -- a leading comma (common when a
+        // dynamic-tag chain conditionally omits the first assignment) must
+        // be stripped, not just a trailing one.
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set>, a = #{a}</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "UPDATE t SET a = ?");
+    }
+
+    #[test]
     fn set_span_map_has_no_phantom_entry_at_stripped_comma_position() {
         // Cold code review B9: with_suffix_strip's span_map filter kept an
         // entry exactly at the truncated text's own end (off <= keep_len

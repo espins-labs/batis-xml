@@ -551,7 +551,9 @@ fn expand_where(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>,
 }
 
 /// `<set>`: same empty-body suppression as `<where>`; otherwise prepend
-/// `SET ` and strip one trailing comma (and the whitespace after it).
+/// `SET ` and strip a leading comma (MyBatis 3.4.5+ `SetSqlNode` also uses
+/// `prefixOverrides=","`, not just `suffixOverrides=","`, B17 cold code
+/// review) as well as a trailing comma (and the whitespace around each).
 fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     ctx.diagnostics.append(&mut inner_diags);
@@ -565,9 +567,16 @@ fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u
             let pieces = if inner_sql.text.trim().is_empty() {
                 Vec::new()
             } else {
-                let trailing_strip = trailing_comma_strip_len(&inner_sql.text);
-                let stripped = with_suffix_strip(inner_sql, trailing_strip);
-                vec![to_piece(with_prefix(stripped, span.start, 0, "SET "))]
+                let leading_strip = leading_comma_strip_len(&inner_sql.text);
+                // Guard against a pathological body that's nothing but a
+                // single comma (or comma-plus-whitespace): the leading and
+                // trailing rules would otherwise both claim the same
+                // byte(s), understripping the text length and panicking in
+                // with_suffix_strip's subtraction.
+                let trailing_strip = trailing_comma_strip_len(&inner_sql.text)
+                    .min(inner_sql.text.len() - leading_strip);
+                let with_lead = with_prefix(inner_sql, span.start, leading_strip, "SET ");
+                vec![to_piece(with_suffix_strip(with_lead, trailing_strip))]
             };
             Alt {
                 pieces,
@@ -1103,6 +1112,27 @@ fn trailing_comma_strip_len(text: &str) -> usize {
     }
     if bytes.len() > ws && bytes[bytes.len() - 1 - ws] == b',' {
         ws + 1
+    } else {
+        0
+    }
+}
+
+/// Length to strip from the start for `<set>`'s leading-comma rule (B17,
+/// cold code review): a comma immediately after the leading whitespace
+/// run, plus the whitespace between it and the first real content --
+/// mirrors [`trailing_comma_strip_len`], reversed.
+fn leading_comma_strip_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i < bytes.len() && bytes[i] == b',' {
+        let mut j = i + 1;
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        j
     } else {
         0
     }
