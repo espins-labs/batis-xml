@@ -79,6 +79,27 @@ constraint on `batis-xml` in `wasm/Cargo.toml`. `release-plz` doesn't
 publish this one (see above); bumping `wasm/Cargo.toml`'s version is a
 manual step when the core crate's public API changes.
 
+## Known limitations
+
+Deferred to 0.1.1+ deliberately, not oversights -- documented here rather
+than fixed now (cold code review, section C):
+
+- **`capture_subtree`'s O(N²) re-parse.** Flattening a dynamic tag
+  re-parses its subtree from a fresh `Reader` positioned at that tag's own
+  span (see its doc comment in `parse.rs`), rather than reusing segments
+  already captured by an enclosing walk. For deeply/widely nested dynamic
+  tags this means each nesting level re-scans everything under it, an
+  O(N²) cost in the total body size. This is now **bounded** by
+  `DEPTH_LIMIT` (256, see cold review B2/B3/A2) rather than unbounded, so
+  it can no longer combine with pathological nesting to become
+  arbitrarily slow -- it's a perf ceiling, not a correctness risk. A
+  single-pass restructure (threading already-captured segments through
+  instead of re-parsing) is deliberately **0.2 scope**: it rewrites the
+  reviewed parsing core that every conformance fixture and proptest
+  invariant is built against, and the regression risk of that rewrite
+  outweighs removing a now-bounded performance ceiling that hasn't shown
+  up as a real problem in the K-1 corpus or the 1MB/<50ms benchmark.
+
 ## Pre-publish checklist
 
 - [x] Generate `schema/batis-xml.v1.json` and pin it with a snapshot test
