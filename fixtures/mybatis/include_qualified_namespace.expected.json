@@ -1,0 +1,85 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 432
+        },
+        "id": {
+          "value": "selectWidgetWithCommonWhere",
+          "span": {
+            "start": 221,
+            "end": 248
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name\n    FROM demo_widget\n    /* batis:include(com.example.demo.mapper.CommonMapper.commonWhere) */\n  ",
+                "span_map": [
+                  [
+                    0,
+                    293
+                  ],
+                  [
+                    60,
+                    353
+                  ],
+                  [
+                    129,
+                    420
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [
+          {
+            "value": {
+              "raw": "com.example.demo.mapper.CommonMapper.commonWhere",
+              "target": {
+                "qualified": {
+                  "ns": "com.example.demo.mapper.CommonMapper",
+                  "id": "commonWhere"
+                }
+              }
+            },
+            "span": {
+              "start": 353,
+              "end": 420
+            }
+          }
+        ],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 262,
+            "end": 291
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}
