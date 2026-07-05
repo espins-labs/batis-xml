@@ -2203,6 +2203,34 @@ mod tests {
     }
 
     #[test]
+    fn choose_child_that_is_neither_when_nor_otherwise_is_diagnosed_not_silently_dropped() {
+        // Cold code review B7: a <choose> child that's neither <when> nor
+        // <otherwise> (including a stray <include>) used to vanish with
+        // no diagnostic at all.
+        let source = r#"<mapper namespace="x">
+            <sql id="cols">a, b</sql>
+            <select id="a">SELECT 1<choose>
+                <when test="a != null"> AND a = #{a}</when>
+                <include refid="cols"/>
+                <otherwise> AND a IS NULL</otherwise>
+            </choose></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        // The branch structure itself is unaffected: <include> contributes
+        // no branch, same as before.
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 2);
+        // But it's no longer silent.
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::UnknownElement
+                && d.message.contains("<include>")
+                && d.message.contains("<choose>")));
+    }
+
+    #[test]
     fn mm_06_cartesian_product_of_sibling_ifs() {
         let source = r#"<mapper namespace="x">
             <select id="a">SELECT 1<if test="a"> AND a</if><if test="b"> AND b</if></select>

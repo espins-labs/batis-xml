@@ -383,6 +383,18 @@ fn expand_choose(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>
             let (otherwise_segments, mut o_diags, _t) = capture_subtree(source, *child_span);
             ctx.diagnostics.append(&mut o_diags);
             local.extend(flatten_segments(source, &otherwise_segments, ctx)?);
+        } else {
+            // Cold code review B7: anything else (including a stray
+            // <include>) used to vanish silently here -- no text
+            // contribution, no diagnostic, nothing telling a consumer
+            // it was even there.
+            ctx.diagnostics.push(Diagnostic {
+                code: DiagCode::UnknownElement,
+                span: Some(*child_span),
+                message: format!(
+                    "<choose> child <{name}> is neither <when> nor <otherwise> -- ignored"
+                ),
+            });
         }
 
         if local.len() as u64 > BRANCH_LIMIT as u64 {
