@@ -20,9 +20,9 @@ export type DiagCode =
       | "missing_statement_id"
       | "branch_limit_exceeded"
       | "unknown_element"
-      | "oversize_input"
     )
   | "dangling_refid"
+  | "oversize_input"
   | "duplicate_attribute"
   | "invalid_entity"
   | "unterminated_placeholder"

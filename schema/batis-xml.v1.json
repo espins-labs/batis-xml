@@ -91,8 +91,7 @@
             "duplicate_statement_id",
             "missing_statement_id",
             "branch_limit_exceeded",
-            "unknown_element",
-            "oversize_input"
+            "unknown_element"
           ]
         },
         {
@@ -100,6 +99,13 @@
           "type": "string",
           "enum": [
             "dangling_refid"
+          ]
+        },
+        {
+          "description": "Input exceeded [`crate::MAX_INPUT_BYTES`] (B25, cold code review: was only documented as \"the 10 MB cap\" in prose; now also a public, checkable constant). Emitted by both `parse`/`parse_bytes` (with `mapper: None`) and `detect_dialect` (with `Dialect::Unknown`) *before* any decoding is attempted, so the cap applies to raw input size regardless of encoding.",
+          "type": "string",
+          "enum": [
+            "oversize_input"
           ]
         },
         {
