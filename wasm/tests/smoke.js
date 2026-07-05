@@ -13,6 +13,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const vm = require("node:vm");
 const wasm = require("../pkg/batis_xml_wasm.js");
 
 const fixturePath = path.join(
@@ -85,6 +86,63 @@ assertThrowsTypeError(() => wasm.detect(null), "detect", "null");
 console.log(
   "PASS: parse()/detect() reject string/number/null input with a clear TypeError",
 );
+
+// B39 (cold code review, minor): `instanceof Uint8Array` is realm-bound --
+// a genuine Uint8Array constructed via node:vm's separate context (a
+// stand-in for a different iframe/Worker realm) has a *different*
+// Uint8Array constructor identity, so `instanceof` alone would wrongly
+// reject it. parse()/detect() must accept it via the duck-typed fallback.
+const otherRealmUint8Array = vm.runInContext(
+  "Uint8Array",
+  vm.createContext({}),
+);
+const crossRealmBytes = new otherRealmUint8Array(bytes);
+assert(
+  !(crossRealmBytes instanceof Uint8Array),
+  "test setup: this array must actually be from a different realm",
+);
+const crossRealmResult = JSON.parse(wasm.parse(crossRealmBytes));
+assert(
+  crossRealmResult.mapper.statements[0].id.value ===
+    "searchWidgetsBySortColumn",
+  "expected a cross-realm Uint8Array to parse the same as a same-realm one",
+);
+assert(
+  wasm.detect(crossRealmBytes) === "mybatis",
+  "expected detect() to also accept a cross-realm Uint8Array",
+);
+console.log("PASS: parse()/detect() accept a cross-realm Uint8Array");
+
+// A detached backing buffer (e.g. already transferred to a Worker via
+// postMessage) must give a friendly, specific message -- not whatever raw
+// exception the JS engine's Uint8Array constructor happens to throw.
+if (typeof ArrayBuffer.prototype.transfer === "function") {
+  const detachedSource = new otherRealmUint8Array(bytes);
+  detachedSource.buffer.transfer();
+  try {
+    wasm.parse(detachedSource);
+    assert(false, "expected parse(detached) to throw");
+  } catch (err) {
+    assert(
+      err instanceof TypeError,
+      `expected a TypeError for a detached buffer, got ${err}`,
+    );
+    assert(
+      err.message.includes("detached"),
+      `expected the detached-buffer message to say so plainly, got: ${err.message}`,
+    );
+  }
+  console.log("PASS: parse() gives a friendly message for a detached buffer");
+} else {
+  console.log(
+    "SKIP: ArrayBuffer.prototype.transfer unavailable in this Node version",
+  );
+}
+
+// A plain Array must still be rejected (no BYTES_PER_ELEMENT at all) --
+// the duck-typing fallback must not loosen A16's original guarantee.
+assertThrowsTypeError(() => wasm.parse([1, 2, 3]), "parse", "a plain array");
+console.log("PASS: parse() still rejects a plain Array");
 
 function assert(cond, message) {
   if (!cond) {
