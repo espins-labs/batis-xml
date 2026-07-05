@@ -228,8 +228,23 @@ pub struct Statement {
     /// Synthesized ids are never invented.
     pub id: Option<Spanned<String>>,
     /// MyBatis per-vendor branching (`databaseId="oracle"` etc.) — `None`
-    /// when the statement doesn't declare one. Distinguishes otherwise
+    /// when neither this statement nor (for a `<selectKey>`-synthesized
+    /// statement) its parent declares one. Distinguishes otherwise
     /// duplicate ids (MM-03).
+    ///
+    /// Inheritance rule (A20/A22, cold code review): a `<selectKey>` child
+    /// statement (synthesized as `"{parent_id}!selectKey"`, see `id`)
+    /// reads its *own* `databaseId` attribute first; only when it has none
+    /// does it inherit the parent statement's `databaseId`. An explicit
+    /// `databaseId` on the `<selectKey>` itself always wins.
+    ///
+    /// When inherited, `span` points at the **parent's** `databaseId`
+    /// attribute, not anywhere inside this child statement's own `span` --
+    /// the parent's attribute is textually outside the child's subtree
+    /// (a `<selectKey>` never contains its enclosing statement's opening
+    /// tag). This is the one case where a `Spanned` value's `span` is
+    /// legitimately outside the `Statement` it's attached to; every other
+    /// `Spanned`/`ByteSpan` field on `Statement` points within `span`.
     #[serde(default)]
     pub database_id: Option<Spanned<String>>,
     pub sql: SqlText,
