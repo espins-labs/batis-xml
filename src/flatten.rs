@@ -925,7 +925,12 @@ fn with_suffix_strip(sql: SqlString, strip_n: usize) -> SqlString {
     let span_map = sql
         .span_map
         .into_iter()
-        .filter(|(off, _)| (*off as usize) <= keep_len)
+        // Cold code review B9: an entry at exactly `keep_len` describes a
+        // segment whose start now coincides with the truncated text's own
+        // end -- zero surviving characters (everything from that offset
+        // onward was just stripped), so it's a phantom one-past-end
+        // entry, not a real remaining segment. `<`, not `<=`.
+        .filter(|(off, _)| (*off as usize) < keep_len)
         .collect();
     SqlString { text, span_map }
 }

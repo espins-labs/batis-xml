@@ -535,6 +535,30 @@ fn statement_kind(local_name: &[u8]) -> Option<StatementKind> {
     }
 }
 
+/// A single variant with empty text and no conditions -- the correct
+/// placeholder/final value for an empty body, matching what flattening an
+/// *actually empty* segment list produces (`flatten_segments` starts its
+/// accumulator at exactly one empty `Alt`). Used for self-closed elements
+/// (`<select/>`, `<sql/>`), which never go through `capture_body`/
+/// `flatten_body` at all.
+///
+/// Cold code review B10: this used to be `SqlText::Variants(Vec::new())`
+/// (zero variants) for self-closed elements specifically -- a different,
+/// inconsistent shape from `<select></select>` (one empty variant).
+/// Consumers matching on `SqlText::Variants(vs)` and indexing `vs[0]`
+/// (a reasonable assumption once `Union`'s branch-count is known to be
+/// low) would panic on a self-closed statement they had no way to
+/// distinguish from an empty-bodied one in the schema.
+fn empty_sql_variants() -> SqlText {
+    SqlText::Variants(vec![SqlVariant {
+        text: SqlString {
+            text: String::new(),
+            span_map: Vec::new(),
+        },
+        conditions: Vec::new(),
+    }])
+}
+
 /// Builds one [`Statement`] from its tag's raw byte range. `seen_ids`
 /// tracks `(id, databaseId)` pairs already collected in this mapper so a
 /// repeated id — legitimate under MyBatis `databaseId` branching when the
@@ -600,9 +624,10 @@ fn build_statement(
         },
         id,
         database_id,
-        // Placeholder — real SQL text capture lands in MM-08 (CDATA/entities)
-        // and MM-06 (dynamic-tag flattening).
-        sql: SqlText::Variants(Vec::new()),
+        // Placeholder for non-self-closed elements (overwritten by MM-08/
+        // MM-06 flattening); the final value for self-closed ones, where
+        // it's correct as-is (B10: matches an empty-bodied element's shape).
+        sql: empty_sql_variants(),
         includes: Vec::new(),
         param_class,
         result_class,
@@ -670,9 +695,9 @@ fn build_fragment(
                     end: tag_end as u32,
                 },
                 id,
-                // Placeholder, same as Statement.sql — real text lands in
-                // MM-07/MM-06.
-                sql: SqlText::Variants(Vec::new()),
+                // Placeholder/final value, same as Statement.sql (B10) --
+                // real text lands in MM-07/MM-06 for non-self-closed <sql>.
+                sql: empty_sql_variants(),
                 // MM-05's job to populate.
                 includes: Vec::new(),
             })
@@ -2506,6 +2531,31 @@ mod tests {
     }
 
     #[test]
+    fn set_span_map_has_no_phantom_entry_at_stripped_comma_position() {
+        // Cold code review B9: with_suffix_strip's span_map filter kept an
+        // entry exactly at the truncated text's own end (off <= keep_len
+        // instead of off < keep_len) -- a phantom entry describing a
+        // segment with zero surviving characters (everything from that
+        // offset onward was the just-stripped trailing comma).
+        let source = r#"<mapper namespace="x">
+            <update id="a">UPDATE t <set>x = #{a},</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        let v = &vs[0];
+        assert_eq!(v.text.text, "UPDATE t SET x = ?");
+        for (off, _) in &v.text.span_map {
+            assert!(
+                (*off as usize) < v.text.text.len(),
+                "span_map entry at offset {off} is >= text length {} (phantom one-past-end entry)",
+                v.text.text.len()
+            );
+        }
+    }
+
+    #[test]
     fn mm_06b_set_omitted_when_inner_is_empty() {
         let source = r#"<mapper namespace="x">
             <update id="a">UPDATE t <set><if test="a != null">name = #{name},</if></set></update>
@@ -2994,6 +3044,42 @@ mod tests {
         let mapper = result.mapper.expect("mapper root");
         assert_eq!(mapper.result_maps.len(), 1);
         assert!(mapper.result_maps[0].mappings.is_empty());
+    }
+
+    // --- B10 (cold code review): a self-closed element (<select/>) used
+    // to get sql: SqlText::Variants(vec![]) (zero variants) as its final
+    // value -- never overwritten by flattening, since self-closed
+    // elements never go through capture_body/flatten_body at all. An
+    // empty-bodied element (<select></select>) *does* flatten (an empty
+    // segment list), producing one variant with empty text. Two different
+    // shapes for what should be the same "no body" case.
+
+    #[test]
+    fn self_closed_statement_and_empty_bodied_statement_have_identical_sql_shape() {
+        let self_closed = r#"<mapper namespace="x"><select id="a"/></mapper>"#;
+        let empty_bodied = r#"<mapper namespace="x"><select id="a"></select></mapper>"#;
+        let a = parse_str(self_closed).mapper.expect("mapper root");
+        let b = parse_str(empty_bodied).mapper.expect("mapper root");
+        assert_eq!(a.statements[0].sql, b.statements[0].sql);
+        assert_eq!(
+            a.statements[0].sql,
+            SqlText::Variants(vec![SqlVariant {
+                text: SqlString {
+                    text: String::new(),
+                    span_map: Vec::new(),
+                },
+                conditions: Vec::new(),
+            }])
+        );
+    }
+
+    #[test]
+    fn self_closed_fragment_and_empty_bodied_fragment_have_identical_sql_shape() {
+        let self_closed = r#"<mapper namespace="x"><sql id="a"/></mapper>"#;
+        let empty_bodied = r#"<mapper namespace="x"><sql id="a"></sql></mapper>"#;
+        let a = parse_str(self_closed).mapper.expect("mapper root");
+        let b = parse_str(empty_bodied).mapper.expect("mapper root");
+        assert_eq!(a.fragments[0].sql, b.fragments[0].sql);
     }
 
     #[test]

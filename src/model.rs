@@ -188,6 +188,11 @@ pub enum SqlText {
     /// Over-cap fallback (accompanied by a `BranchLimitExceeded` diagnostic).
     Union {
         text: SqlString,
+        /// A **lower bound**, not necessarily the exact branch count:
+        /// flattening bails out of cartesian expansion as soon as it's
+        /// certain the total exceeds the cap, without finishing the
+        /// (possibly much larger) exact count. Treat this as "at least
+        /// this many, over the cap" rather than a precise total.
         branch_count: u32,
     },
 }
