@@ -992,6 +992,18 @@ fn to_piece(sql: SqlString) -> Piece {
 /// from `sql.text`. Re-bases the remaining span_map entries so offsets
 /// stay correct and strictly increasing.
 fn with_prefix(sql: SqlString, wrapper_start: u32, strip_n: usize, prefix: &str) -> SqlString {
+    // B19 (cold code review): nothing stripped and nothing prepended is a
+    // genuine no-op -- return `sql` untouched. The code below used to
+    // unconditionally rewrite the first span_map entry to the wrapper
+    // tag's own span start regardless of `prefix`/`strip_n`, so e.g. a
+    // `<foreach>` with no `open` attribute (empty `prefix`, `strip_n == 0`)
+    // silently lost its inner text's own first entry -- the mapped offset
+    // for the very start of the body pointed at the `<foreach>` tag
+    // instead of wherever the first placeholder/text segment actually is.
+    if prefix.is_empty() && strip_n == 0 {
+        return sql;
+    }
+
     let kept = &sql.text[strip_n..];
     let mut span_map = vec![(0u32, wrapper_start)];
 

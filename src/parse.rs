@@ -3024,6 +3024,36 @@ mod tests {
     }
 
     #[test]
+    fn b19_foreach_without_open_keeps_inner_text_own_span_map_entry() {
+        // Cold code review B19: with_prefix used to unconditionally
+        // rewrite the first span_map entry to the wrapper tag's own span
+        // start, even when prefix == "" and nothing was stripped (a
+        // genuine no-op case) -- a <foreach> with no `open` attribute lost
+        // its inner text's own (correct) first entry this way.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<foreach item="i" collection="list">#{i}</foreach></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1?");
+
+        let placeholder_raw_offset = source.find("#{i}").expect("placeholder in source") as u32;
+        let synthetic_offset = "SELECT 1".len() as u32; // where '?' begins
+        let (_, raw) = vs[0]
+            .text
+            .span_map
+            .iter()
+            .find(|(off, _)| *off == synthetic_offset)
+            .expect("span_map entry at the placeholder's synthetic offset");
+        assert_eq!(
+            *raw, placeholder_raw_offset,
+            "mapped offset must point at the placeholder's own source position, not the <foreach> tag's start"
+        );
+    }
+
+    #[test]
     fn mm_06b_bind_contributes_no_text_but_records_property_path() {
         let source = r#"<mapper namespace="x">
             <select id="a"><bind name="pattern" value="'%' + name + '%'"/>SELECT 1 WHERE name LIKE #{pattern}</select>
