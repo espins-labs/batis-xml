@@ -2325,6 +2325,68 @@ mod tests {
         assert_eq!(mapper.statements[0].includes[0].value.raw, "a*/b");
     }
 
+    // --- B16 (cold code review): a placeholder split across a text/CDATA
+    // boundary used to be misread as an unterminated placeholder in the
+    // first segment plus stray leftover text in the second, since MM-07
+    // normalized each BodySegment::Text independently. End-to-end (real
+    // CDATA, through the full capture_body -> flatten pipeline) versions
+    // of the placeholder.rs unit tests.
+
+    #[test]
+    fn placeholder_split_by_real_cdata_boundary_normalizes_correctly() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">WHERE id = #{i<![CDATA[d}]]></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "WHERE id = ?");
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != DiagCode::UnterminatedPlaceholder));
+        assert_eq!(mapper.statements[0].property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn placeholder_split_across_two_real_cdata_sections_normalizes_correctly() {
+        // Three segments: plain text "#{i", CDATA "d", CDATA "}".
+        let source = r#"<mapper namespace="x">
+            <select id="a">WHERE id = #{i<![CDATA[d]]><![CDATA[}]]></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "WHERE id = ?");
+        assert!(result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != DiagCode::UnterminatedPlaceholder));
+        assert_eq!(mapper.statements[0].property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn merge_of_non_straddling_segments_stays_byte_identical_to_per_segment_span_map() {
+        // Pure-merge invariant: a CDATA boundary with NO placeholder
+        // crossing it must still produce a span_map entry at that
+        // junction (matching what processing each segment independently
+        // would have produced) -- not just at replacement points.
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<![CDATA[ FROM widget]]> WHERE a = #{a}</select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let vs = variants(&mapper.statements[0].sql);
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].text.text, "SELECT 1 FROM widget WHERE a = ?");
+        // 3 segments (plain, CDATA, plain-with-placeholder) -> at least 3
+        // span_map entries: initial + CDATA junction + post-replacement.
+        assert!(vs[0].text.span_map.len() >= 3);
+        assert!(vs[0].text.span_map.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
     #[test]
     fn mm_06_fragment_sql_is_also_flattened() {
         let source = r#"<mapper namespace="x">

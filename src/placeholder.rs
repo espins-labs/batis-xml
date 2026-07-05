@@ -8,7 +8,13 @@
 //!   `Statement::property_paths`.
 //! - Option syntax (`#{id, jdbcType=VARCHAR}`) keeps only the path.
 //!
-//! Must also work inside CDATA sections (combined with MM-08).
+//! Must also work inside CDATA sections (combined with MM-08), *including*
+//! a placeholder whose delimiters straddle a text/CDATA boundary (cold
+//! code review B16) -- [`normalize_merged`] merges a run of adjacent
+//! source segments into one logical text before scanning, so
+//! `WHERE id = #{i` + CDATA `d}` (two segments) is recognized as the one
+//! placeholder `#{id}` it actually is, not an unterminated placeholder in
+//! the first segment plus stray leftover text in the second.
 //!
 //! ## Span fidelity (honest approximation)
 //!
@@ -24,27 +30,31 @@
 //! non-verbatim segment collapses to a zero-width point at
 //! `raw_span.start` — still a valid, in-range span (invariant 2), just
 //! coarse.
+//!
+//! When multiple segments are merged (B16), this verbatim/coarse
+//! determination is still made **per source segment** -- a property path
+//! or replacement that falls entirely within one merged-in segment gets
+//! that segment's own precision. A path that itself straddles a junction
+//! between two segments (the placeholder crossed the boundary, but the
+//! *path text* inside it also happens to straddle) has no single
+//! contiguous raw range to report at all (the original bytes in between
+//! aren't even contiguous — e.g. a `<![CDATA[`/`]]>` delimiter sits
+//! between them), so it also collapses to a coarse zero-width point, at
+//! the start position's own resolved offset.
 
 use crate::model::*;
 
 /// Substitution marker for `${}` dynamic fragments (fixed by spec).
 pub(crate) const DYN_MARKER: &str = "__BATIS_DYN__";
 
-/// Result of [`normalize_segment`].
-///
-/// `text`/`span_map` aren't read outside tests yet: `extract_property_paths`
-/// (parse.rs) only consumes `property_paths`/`diagnostics` today — final
-/// `SqlText` assembly (and thus real use of the rewritten text + span map)
-/// is MM-06's job.
+/// Result of [`normalize_segment`]/[`normalize_merged`].
 pub(crate) struct NormalizedSegment {
     /// The rewritten text (`#{}`/`#..#` → `?`, `${}`/`$..$` → [`DYN_MARKER`]).
-    #[allow(dead_code)]
     pub(crate) text: String,
     /// `(synthetic offset, original byte offset)` pairs in the same format
     /// as [`SqlString::span_map`] — an entry at offset 0 and after every
     /// replacement. MM-06 concatenates these across segments with offset
     /// shifts to build the final map.
-    #[allow(dead_code)]
     pub(crate) span_map: Vec<(u32, u32)>,
     /// Paths found from both `#`/`$` forms — a `${}` dynamic table name is
     /// exactly what downstream SQL analysis wants to know about.
@@ -52,17 +62,126 @@ pub(crate) struct NormalizedSegment {
     pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
-/// Normalizes one decoded text segment's placeholders.
+/// One source text run contributing to a [`normalize_merged`] pass: an
+/// already-decoded segment plus its own raw byte span (same shape as
+/// `parse::TextSegment`, kept separate so this module doesn't depend on
+/// `parse`'s internal types).
+pub(crate) struct TextRun<'a> {
+    pub(crate) decoded: &'a str,
+    pub(crate) raw_span: ByteSpan,
+}
+
+/// Normalizes a single decoded text segment's placeholders. A thin
+/// wrapper over [`normalize_merged`] with a one-element run list -- kept
+/// (test-only) because this module's own unit tests are most direct to
+/// write and read against a single segment; flatten.rs always goes
+/// through `normalize_merged` directly since it must handle runs of any
+/// length (B16, cold code review).
+#[cfg(test)]
 pub(crate) fn normalize_segment(
     decoded: &str,
     raw_span: ByteSpan,
     dialect: Dialect,
 ) -> NormalizedSegment {
-    let verbatim = decoded.len() as u32 == raw_span.end - raw_span.start;
-    let bytes = decoded.as_bytes();
+    normalize_merged(&[TextRun { decoded, raw_span }], dialect)
+}
 
-    let mut normalized = String::with_capacity(decoded.len());
-    let mut span_map = vec![(0u32, raw_span.start)];
+/// Where one source run lands in the merged text, plus its own verbatim
+/// determination -- resolved once per run, reused for every position
+/// that falls inside it.
+struct RunLayout<'a> {
+    merged_start: usize,
+    raw_span: ByteSpan,
+    /// Same rule as the single-segment case: this run's own decoded
+    /// length equals its own raw byte length.
+    verbatim: bool,
+    #[allow(dead_code)]
+    decoded: &'a str,
+}
+
+impl RunLayout<'_> {
+    /// Exact raw offset for `merged_offset` if this run is verbatim (and
+    /// `merged_offset` is assumed to already fall within it, per
+    /// `layout_for`); the run's own coarse start otherwise.
+    fn raw_offset(&self, merged_offset: usize) -> u32 {
+        if self.verbatim {
+            self.raw_span.start + (merged_offset - self.merged_start) as u32
+        } else {
+            self.raw_span.start
+        }
+    }
+}
+
+/// Finds the run in `layout` that contains `merged_offset` -- the run
+/// with the greatest `merged_start` that's still `<= merged_offset`.
+/// Always resolves to *some* run for any offset actually produced while
+/// scanning the merged text built from the same `layout` (including the
+/// text's own end, via the last run).
+fn layout_for<'a, 'b>(layout: &'b [RunLayout<'a>], merged_offset: usize) -> &'b RunLayout<'a> {
+    layout
+        .iter()
+        .rev()
+        .find(|l| l.merged_start <= merged_offset)
+        .unwrap_or(&layout[0])
+}
+
+/// Copies `merged[from..to]` into `normalized`, splitting the copy at any
+/// run-junction offsets that fall strictly inside that range and adding a
+/// `span_map` entry (at the resulting `normalized` position) for each one.
+/// This is what makes the merge "pure" (B16): a run of segments with no
+/// placeholder crossing any of their junctions still gets exactly the
+/// same span_map density as processing them one at a time would have --
+/// one entry per original segment boundary -- not just entries where an
+/// actual replacement happened.
+fn flush_literal(
+    normalized: &mut String,
+    span_map: &mut Vec<(u32, u32)>,
+    merged: &str,
+    layout: &[RunLayout],
+    from: usize,
+    to: usize,
+) {
+    if from >= to {
+        return;
+    }
+    let mut pos = from;
+    for l in layout {
+        if l.merged_start > pos && l.merged_start < to {
+            normalized.push_str(&merged[pos..l.merged_start]);
+            span_map.push((normalized.len() as u32, l.raw_span.start));
+            pos = l.merged_start;
+        }
+    }
+    normalized.push_str(&merged[pos..to]);
+}
+
+/// Normalizes a run of adjacent source segments as one logical piece of
+/// text (B16): concatenates their already-decoded text, then scans the
+/// *whole* merged string for placeholders exactly as
+/// [`normalize_segment`] would a single segment -- so a placeholder split
+/// across a junction (e.g. a text/CDATA boundary) is found as one
+/// placeholder, not two broken pieces. Each replacement/path's raw
+/// offset is resolved back through whichever original run it actually
+/// falls in (see [`RunLayout`]), preserving per-segment precision for the
+/// common (non-straddling) case.
+pub(crate) fn normalize_merged(runs: &[TextRun], dialect: Dialect) -> NormalizedSegment {
+    debug_assert!(!runs.is_empty());
+
+    let mut merged = String::new();
+    let mut layout = Vec::with_capacity(runs.len());
+    for run in runs {
+        layout.push(RunLayout {
+            merged_start: merged.len(),
+            raw_span: run.raw_span,
+            verbatim: run.decoded.len() as u32 == run.raw_span.end - run.raw_span.start,
+            decoded: run.decoded,
+        });
+        merged.push_str(run.decoded);
+    }
+
+    let bytes = merged.as_bytes();
+    let mut normalized = String::with_capacity(merged.len());
+    let mut span_map = vec![(0u32, layout[0].raw_offset(0))];
     let mut property_paths = Vec::new();
     let mut diagnostics = Vec::new();
 
@@ -73,25 +192,38 @@ pub(crate) fn normalize_segment(
         if bytes[i] == b'#' && bytes.get(i + 1) == Some(&b'{') {
             match consume_braced(bytes, i) {
                 Some((content_start, content_end, end_pos)) => {
-                    normalized.push_str(&decoded[copy_start..i]);
+                    flush_literal(
+                        &mut normalized,
+                        &mut span_map,
+                        &merged,
+                        &layout,
+                        copy_start,
+                        i,
+                    );
                     push_path(
                         &mut property_paths,
-                        extract_path_mybatis(&decoded[content_start..content_end]),
-                        decoded,
-                        raw_span,
-                        verbatim,
+                        extract_path_mybatis(&merged[content_start..content_end]),
+                        &merged,
+                        &layout,
                     );
                     normalized.push('?');
                     copy_start = end_pos;
                     i = end_pos;
                     span_map.push((
                         normalized.len() as u32,
-                        raw_offset(raw_span, verbatim, end_pos),
+                        layout_for(&layout, end_pos).raw_offset(end_pos),
                     ));
                 }
                 None => {
-                    diagnostics.push(unterminated_placeholder(raw_span));
-                    normalized.push_str(&decoded[copy_start..]);
+                    diagnostics.push(unterminated_placeholder(&layout));
+                    flush_literal(
+                        &mut normalized,
+                        &mut span_map,
+                        &merged,
+                        &layout,
+                        copy_start,
+                        bytes.len(),
+                    );
                     copy_start = bytes.len();
                     i = bytes.len();
                 }
@@ -102,25 +234,38 @@ pub(crate) fn normalize_segment(
         if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'{') {
             match consume_braced(bytes, i) {
                 Some((content_start, content_end, end_pos)) => {
-                    normalized.push_str(&decoded[copy_start..i]);
+                    flush_literal(
+                        &mut normalized,
+                        &mut span_map,
+                        &merged,
+                        &layout,
+                        copy_start,
+                        i,
+                    );
                     push_path(
                         &mut property_paths,
-                        extract_path_mybatis(&decoded[content_start..content_end]),
-                        decoded,
-                        raw_span,
-                        verbatim,
+                        extract_path_mybatis(&merged[content_start..content_end]),
+                        &merged,
+                        &layout,
                     );
                     normalized.push_str(DYN_MARKER);
                     copy_start = end_pos;
                     i = end_pos;
                     span_map.push((
                         normalized.len() as u32,
-                        raw_offset(raw_span, verbatim, end_pos),
+                        layout_for(&layout, end_pos).raw_offset(end_pos),
                     ));
                 }
                 None => {
-                    diagnostics.push(unterminated_placeholder(raw_span));
-                    normalized.push_str(&decoded[copy_start..]);
+                    diagnostics.push(unterminated_placeholder(&layout));
+                    flush_literal(
+                        &mut normalized,
+                        &mut span_map,
+                        &merged,
+                        &layout,
+                        copy_start,
+                        bytes.len(),
+                    );
                     copy_start = bytes.len();
                     i = bytes.len();
                 }
@@ -138,18 +283,24 @@ pub(crate) fn normalize_segment(
             // bare delimiters (e.g. two monetary literals: "$100 ... $200")
             // must not pair up and swallow the SQL between them.
             if let Some(close) = find_byte(bytes, i + 1, delim).filter(|&close| {
-                !decoded[i + 1..close]
+                !merged[i + 1..close]
                     .bytes()
                     .any(|b| b.is_ascii_whitespace())
             }) {
-                normalized.push_str(&decoded[copy_start..i]);
-                let content = &decoded[i + 1..close];
+                flush_literal(
+                    &mut normalized,
+                    &mut span_map,
+                    &merged,
+                    &layout,
+                    copy_start,
+                    i,
+                );
+                let content = &merged[i + 1..close];
                 push_path(
                     &mut property_paths,
                     extract_path_ibatis(content),
-                    decoded,
-                    raw_span,
-                    verbatim,
+                    &merged,
+                    &layout,
                 );
                 if delim == b'#' {
                     normalized.push('?');
@@ -161,7 +312,7 @@ pub(crate) fn normalize_segment(
                 i = end_pos;
                 span_map.push((
                     normalized.len() as u32,
-                    raw_offset(raw_span, verbatim, end_pos),
+                    layout_for(&layout, end_pos).raw_offset(end_pos),
                 ));
                 continue;
             }
@@ -170,7 +321,14 @@ pub(crate) fn normalize_segment(
         i += 1;
     }
 
-    normalized.push_str(&decoded[copy_start..]);
+    flush_literal(
+        &mut normalized,
+        &mut span_map,
+        &merged,
+        &layout,
+        copy_start,
+        bytes.len(),
+    );
     NormalizedSegment {
         text: normalized,
         span_map,
@@ -225,27 +383,35 @@ fn extract_path_ibatis(raw: &str) -> &str {
 }
 
 /// Pushes `path` into `property_paths` with its span, skipping empty paths
-/// (`#{}`) silently — nothing to record, nothing to diagnose.
+/// (`#{}`) silently — nothing to record, nothing to diagnose. `path` must
+/// be a substring of `merged` (pointer arithmetic locates it). Exact when
+/// `path` falls entirely within one verbatim source run; coarse (a
+/// zero-width point at the start's own resolved offset) when it straddles
+/// two runs or its run isn't verbatim -- see the module doc comment.
 fn push_path(
     property_paths: &mut Vec<Spanned<String>>,
     path: &str,
-    decoded: &str,
-    raw_span: ByteSpan,
-    verbatim: bool,
+    merged: &str,
+    layout: &[RunLayout],
 ) {
     if path.is_empty() {
         return;
     }
-    let span = if verbatim {
-        let offset = (path.as_ptr() as usize) - (decoded.as_ptr() as usize);
+    let start_offset = (path.as_ptr() as usize) - (merged.as_ptr() as usize);
+    let end_offset = start_offset + path.len();
+    let start_layout = layout_for(layout, start_offset);
+    let end_layout = layout_for(layout, end_offset.saturating_sub(1).max(start_offset));
+
+    let span = if start_layout.merged_start == end_layout.merged_start && start_layout.verbatim {
         ByteSpan {
-            start: raw_span.start + offset as u32,
-            end: raw_span.start + offset as u32 + path.len() as u32,
+            start: start_layout.raw_offset(start_offset),
+            end: start_layout.raw_offset(end_offset),
         }
     } else {
+        let anchor = start_layout.raw_offset(start_offset);
         ByteSpan {
-            start: raw_span.start,
-            end: raw_span.start,
+            start: anchor,
+            end: anchor,
         }
     };
     property_paths.push(Spanned {
@@ -254,18 +420,16 @@ fn push_path(
     });
 }
 
-fn raw_offset(raw_span: ByteSpan, verbatim: bool, decoded_offset: usize) -> u32 {
-    if verbatim {
-        raw_span.start + decoded_offset as u32
-    } else {
-        raw_span.start
-    }
-}
-
-fn unterminated_placeholder(raw_span: ByteSpan) -> Diagnostic {
+/// Spans the whole merged extent (first run's start to last run's end) --
+/// for a single run this is exactly that run's own `raw_span`, matching
+/// the pre-B16 behavior byte-for-byte.
+fn unterminated_placeholder(layout: &[RunLayout]) -> Diagnostic {
     Diagnostic {
         code: DiagCode::UnterminatedPlaceholder,
-        span: Some(raw_span),
+        span: Some(ByteSpan {
+            start: layout.first().expect("non-empty layout").raw_span.start,
+            end: layout.last().expect("non-empty layout").raw_span.end,
+        }),
         message: "placeholder was never closed".to_string(),
     }
 }
@@ -481,5 +645,89 @@ mod tests {
         assert_eq!(result.text, "SELECT * FROM t WHERE id = ?");
         assert!(result.diagnostics.is_empty());
         assert_eq!(result.property_paths[0].value, "id");
+    }
+
+    // --- B16 (cold code review): a placeholder split across a
+    // text/CDATA boundary must normalize correctly when the surrounding
+    // segments are merged before scanning.
+
+    fn run<'a>(decoded: &'a str, start: u32) -> TextRun<'a> {
+        TextRun {
+            decoded,
+            raw_span: ByteSpan {
+                start,
+                end: start + decoded.len() as u32,
+            },
+        }
+    }
+
+    #[test]
+    fn merged_placeholder_split_across_two_runs_normalizes_correctly() {
+        // "WHERE id = #{i" + CDATA "d}" -- the exact B16 repro.
+        let runs = [run("WHERE id = #{i", 0), run("d}", 14)];
+        let result = normalize_merged(&runs, Dialect::Mybatis);
+        assert_eq!(result.text, "WHERE id = ?");
+        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.property_paths.len(), 1);
+        assert_eq!(result.property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn merged_placeholder_split_across_split_cdata_normalizes_correctly() {
+        // Three runs, split so the placeholder's braces AND part of its
+        // path each land in a different run: "#{i" | "d" | "}".
+        let runs = [run("WHERE id = #{i", 0), run("d", 14), run("}", 20)];
+        let result = normalize_merged(&runs, Dialect::Mybatis);
+        assert_eq!(result.text, "WHERE id = ?");
+        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn merged_placeholder_split_across_three_runs_path_and_all() {
+        // The path itself straddles two runs ("i" | "d"), and the closing
+        // brace is in a third -- still one placeholder, coarse span
+        // acceptable since the path text itself isn't contiguous source.
+        let runs = [run("WHERE id = #{i", 0), run("d", 20), run("}", 30)];
+        let result = normalize_merged(&runs, Dialect::Mybatis);
+        assert_eq!(result.text, "WHERE id = ?");
+        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.property_paths[0].value, "id");
+        // Straddles a junction (the "i"/"d" split) -- coarse zero-width
+        // span at the path's own start, not a claim of exact precision.
+        let span = result.property_paths[0].span;
+        assert_eq!(span.start, span.end);
+    }
+
+    #[test]
+    fn merged_placeholder_entirely_within_one_run_stays_exact() {
+        // A merge with more than one run, but the placeholder itself
+        // doesn't straddle -- must keep exact precision, not degrade to
+        // coarse just because it's part of a merged pass.
+        let runs = [run("WHERE id = #{id}", 0), run(" AND x = 1", 16)];
+        let result = normalize_merged(&runs, Dialect::Mybatis);
+        assert_eq!(result.text, "WHERE id = ? AND x = 1");
+        assert_eq!(result.property_paths[0].value, "id");
+        let span = result.property_paths[0].span;
+        assert_eq!(
+            &"WHERE id = #{id}"[(span.start as usize)..(span.end as usize)],
+            "id"
+        );
+    }
+
+    #[test]
+    fn merged_genuinely_unterminated_placeholder_spans_the_whole_merge() {
+        let runs = [run("WHERE id = #{i", 0), run("d", 14)]; // no closing brace anywhere
+        let result = normalize_merged(&runs, Dialect::Mybatis);
+        assert_eq!(result.text, "WHERE id = #{id");
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].code,
+            DiagCode::UnterminatedPlaceholder
+        );
+        assert_eq!(
+            result.diagnostics[0].span,
+            Some(ByteSpan { start: 0, end: 15 })
+        );
     }
 }

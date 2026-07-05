@@ -230,6 +230,64 @@ fn flatten_segments(
     result
 }
 
+/// One dispatch unit for the main flattening/union walks: either a run of
+/// one or more consecutive [`BodySegment::Text`] entries, or a single
+/// [`BodySegment::DynamicTag`]. B16 (cold code review): a run must be
+/// normalized as ONE logical piece of text (see [`normalize_run`]) so a
+/// placeholder split across a text/CDATA boundary (two separate
+/// `BodySegment::Text` entries in document order) is recognized as one
+/// placeholder, not an unterminated one plus stray leftover text.
+enum RunItem<'a> {
+    Text(Vec<&'a crate::parse::TextSegment>),
+    Tag {
+        name: &'a String,
+        span: &'a ByteSpan,
+    },
+}
+
+/// Groups `segments` into [`RunItem`]s in document order.
+fn group_runs(segments: &[BodySegment]) -> Vec<RunItem<'_>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < segments.len() {
+        match &segments[i] {
+            BodySegment::Text(_) => {
+                let mut run = Vec::new();
+                while let Some(BodySegment::Text(t)) = segments.get(i) {
+                    run.push(t);
+                    i += 1;
+                }
+                out.push(RunItem::Text(run));
+            }
+            BodySegment::DynamicTag { name, span } => {
+                out.push(RunItem::Tag { name, span });
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Normalizes a run of adjacent text segments as one logical piece
+/// (B16), folding the result into `ctx` and returning the assembled
+/// [`Piece`].
+fn normalize_run(texts: &[&crate::parse::TextSegment], ctx: &mut Ctx) -> Piece {
+    let runs: Vec<placeholder::TextRun> = texts
+        .iter()
+        .map(|t| placeholder::TextRun {
+            decoded: &t.decoded,
+            raw_span: t.raw_span,
+        })
+        .collect();
+    let mut result = placeholder::normalize_merged(&runs, ctx.dialect);
+    ctx.property_paths.append(&mut result.property_paths);
+    ctx.diagnostics.append(&mut result.diagnostics);
+    Piece::Normalized {
+        text: result.text,
+        span_map: result.span_map,
+    }
+}
+
 fn flatten_segments_inner(
     source: &str,
     segments: &[BodySegment],
@@ -237,22 +295,15 @@ fn flatten_segments_inner(
 ) -> Result<Vec<Alt>, u64> {
     let mut acc = vec![empty_alt()];
 
-    for segment in segments {
-        match segment {
-            BodySegment::Text(text) => {
-                let mut result =
-                    placeholder::normalize_segment(&text.decoded, text.raw_span, ctx.dialect);
-                ctx.property_paths.append(&mut result.property_paths);
-                ctx.diagnostics.append(&mut result.diagnostics);
-                let piece = Piece::Normalized {
-                    text: result.text,
-                    span_map: result.span_map,
-                };
+    for item in group_runs(segments) {
+        match item {
+            RunItem::Text(texts) => {
+                let piece = normalize_run(&texts, ctx);
                 for alt in &mut acc {
                     alt.pieces.push(piece.clone());
                 }
             }
-            BodySegment::DynamicTag { name, span } => match name.as_str() {
+            RunItem::Tag { name, span } => match name.as_str() {
                 "include" => {
                     record_include(source, *span, ctx);
                     let raw = read_refid(source, *span);
@@ -729,32 +780,25 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
 
     let mut pieces = Vec::new();
 
-    for segment in segments {
-        match segment {
-            BodySegment::Text(text) => {
-                let mut result =
-                    placeholder::normalize_segment(&text.decoded, text.raw_span, ctx.dialect);
-                ctx.property_paths.append(&mut result.property_paths);
-                ctx.diagnostics.append(&mut result.diagnostics);
-                pieces.push(Piece::Normalized {
-                    text: result.text,
-                    span_map: result.span_map,
-                });
+    for item in group_runs(segments) {
+        match item {
+            RunItem::Text(texts) => {
+                pieces.push(normalize_run(&texts, ctx));
             }
-            BodySegment::DynamicTag { name, span } if name == "include" => {
+            RunItem::Tag { name, span } if name == "include" => {
                 record_include(source, *span, ctx);
                 pieces.push(Piece::Include {
                     raw: read_refid(source, *span),
                     span: *span,
                 });
             }
-            BodySegment::DynamicTag { name, span } if name == "bind" => {
+            RunItem::Tag { name, span } if name == "bind" => {
                 let value = read_attr(source, *span, b"value", ctx);
                 if !value.is_empty() {
                     ctx.property_paths.push(Spanned { value, span: *span });
                 }
             }
-            BodySegment::DynamicTag { name, span } if name == "iterate" => {
+            RunItem::Tag { name, span } if name == "iterate" => {
                 if let Some(property) = read_attr_opt(source, *span, b"property", ctx) {
                     if !property.is_empty() {
                         ctx.property_paths.push(Spanned {
@@ -767,7 +811,7 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
                 ctx.diagnostics.append(&mut d);
                 pieces.extend(union_walk(source, &inner_segments, ctx));
             }
-            BodySegment::DynamicTag { name, span } if name == "choose" => {
+            RunItem::Tag { name, span } if name == "choose" => {
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
                 ctx.diagnostics.append(&mut d);
                 for child in &inner_segments {
@@ -784,7 +828,7 @@ fn union_walk(source: &str, segments: &[BodySegment], ctx: &mut Ctx) -> Vec<Piec
                     }
                 }
             }
-            BodySegment::DynamicTag { span, .. } => {
+            RunItem::Tag { span, .. } => {
                 let (inner_segments, mut d, _t) = capture_subtree(source, *span);
                 ctx.diagnostics.append(&mut d);
                 pieces.extend(union_walk(source, &inner_segments, ctx));
