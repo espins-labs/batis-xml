@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 wasm-pack build wasm --target nodejs
 
 cp wasm/schema.d.ts wasm/pkg/schema.d.ts
+cp LICENSE-MIT LICENSE-APACHE wasm/pkg/
 
 node - <<'NODE'
 const fs = require("fs");
@@ -18,8 +19,10 @@ const fs = require("fs");
 const pkgPath = "wasm/pkg/package.json";
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 pkg.name = "batis-xml";
-if (!pkg.files.includes("schema.d.ts")) {
-  pkg.files.push("schema.d.ts");
+for (const f of ["schema.d.ts", "LICENSE-MIT", "LICENSE-APACHE"]) {
+  if (!pkg.files.includes(f)) {
+    pkg.files.push(f);
+  }
 }
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 NODE
