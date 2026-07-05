@@ -15,11 +15,14 @@
 //!   IBATIS_BATCH_DIR=<path to the private batch repo root> \
 //!   cargo run --release --example q_chain -- <statement.id>
 //!
-//! Assumes the corpus layout of that private repo:
-//! - sqlMaps: $IBATIS_BATCH_DIR/src/main/resources/trgframework/sqlmap/<dialect>/**/*.xml
-//!   (dialect subdirectory names, e.g. `mysql`/`oracle`, are discovered from
-//!   the filesystem -- never hardcoded, so an id absent from a dialect dir
-//!   is reported as ABSENT rather than silently omitted).
+//! Assumes the corpus layout of that private repo (its paths supplied via
+//! env, never committed):
+//! - sqlMaps: $IBATIS_BATCH_DIR/$IBATIS_SQLMAP_SUBPATH/<dialect>/**/*.xml,
+//!   where IBATIS_SQLMAP_SUBPATH is the project-specific path (under the repo
+//!   root) to the directory holding the per-dialect sqlMap subdirs. Dialect
+//!   subdirectory names, e.g. `mysql`/`oracle`, are discovered from the
+//!   filesystem -- never hardcoded, so an id absent from a dialect dir is
+//!   reported as ABSENT rather than silently omitted.
 //! - Java sources: $IBATIS_BATCH_DIR/src/main/java/**/*.java
 //!
 //! Output is designed for the byte budget an agent would actually read:
@@ -62,7 +65,7 @@ fn main() {
         Some(id) => id,
         None => {
             eprintln!(
-                "usage: IBATIS_BATCH_DIR=<path> cargo run --release --example q_chain -- <statement.id>"
+                "usage: IBATIS_BATCH_DIR=<path> IBATIS_SQLMAP_SUBPATH=<subpath> cargo run --release --example q_chain -- <statement.id>"
             );
             std::process::exit(1);
         }
@@ -76,7 +79,18 @@ fn main() {
         }
     };
 
-    let sqlmap_root = batch_dir.join("src/main/resources/trgframework/sqlmap");
+    // The path under the repo root to the per-dialect sqlMap directory is
+    // project-specific; supply it via env so no private layout is committed.
+    let sqlmap_subpath = match env::var("IBATIS_SQLMAP_SUBPATH") {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!(
+                "IBATIS_SQLMAP_SUBPATH is not set (path under the repo root to the per-dialect sqlMap directory)"
+            );
+            std::process::exit(1);
+        }
+    };
+    let sqlmap_root = batch_dir.join(&sqlmap_subpath);
     let java_root = batch_dir.join("src/main/java");
 
     // Discover dialect dirs from the filesystem -- never hardcode names, so
