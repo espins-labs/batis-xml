@@ -1235,8 +1235,41 @@ pub(crate) fn capture_body(
                     start: child_start as u32,
                     end: end as u32,
                 };
-                let decoded = match text.unescape() {
-                    Ok(decoded) => decoded.into_owned(),
+                // A10 (cold code review): quick-xml 0.41 removed
+                // `BytesText::unescape()`. `source` is always
+                // already-decoded UTF-8 text (see `encoding.rs`), so
+                // `decode()` (encoding only, not entity resolution) can't
+                // meaningfully fail here -- and as of 0.41 a `Text` event's
+                // content never contains an unresolved `&...;` anyway
+                // (entity/character references are now tokenized as their
+                // own `Event::GeneralRef`, handled separately below), so
+                // there is nothing left to unescape at this point.
+                let decoded = text.decode().map(|d| d.into_owned()).unwrap_or_else(|_| {
+                    source[raw_span.start as usize..raw_span.end as usize].to_string()
+                });
+                segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
+            }
+            Ok(Event::GeneralRef(_entity_ref)) => {
+                // A10 (cold code review): as of quick-xml 0.41, an entity
+                // or character reference (`&name;` / `&#NN;` / `&#xNN;`)
+                // is its own event rather than embedded in the
+                // surrounding `Event::Text`'s raw content -- this is the
+                // direct replacement for the pre-0.41 whole-blob
+                // `BytesText::unescape()` call, just resolved one
+                // reference at a time. Produces its own `TextSegment`
+                // (adjacent segments are merged before MM-07 placeholder
+                // normalization -- see flatten.rs's B16 comment), so
+                // surrounding plain text keeps an exact (verbatim)
+                // span_map entry instead of the whole run being coarsened
+                // just because one reference in it needed resolving.
+                let end = reader.buffer_position() as usize;
+                let raw_span = ByteSpan {
+                    start: child_start as u32,
+                    end: end as u32,
+                };
+                let raw_text = &source[raw_span.start as usize..raw_span.end as usize];
+                let decoded = match quick_xml::escape::unescape(raw_text) {
+                    Ok(resolved) => resolved.into_owned(),
                     Err(err) => {
                         diagnostics.push(Diagnostic {
                             code: DiagCode::InvalidEntity,
@@ -1245,7 +1278,7 @@ pub(crate) fn capture_body(
                         });
                         // Degrade gracefully: keep the raw (still-escaped)
                         // text rather than dropping the segment.
-                        source[raw_span.start as usize..raw_span.end as usize].to_string()
+                        raw_text.to_string()
                     }
                 };
                 segments.push(BodySegment::Text(TextSegment { decoded, raw_span }));
@@ -1978,36 +2011,85 @@ mod tests {
 
     #[test]
     fn mm_08_predefined_and_numeric_entities_decoded_raw_span_preserved() {
+        // A10 (cold code review): as of quick-xml 0.41, each entity/
+        // character reference tokenizes as its own `Event::GeneralRef`
+        // rather than living inside one big `Event::Text` blob (see
+        // parse.rs's `Ok(Event::GeneralRef(..))` arm) -- so this now
+        // captures as several segments, not one. The invariants that
+        // actually matter (every byte accounted for, contiguous spans,
+        // decoded content correct, raw span slices back to the exact
+        // original substring) are asserted directly instead of pinning
+        // today's exact segment count.
         let source = "<select id=\"x\">a &lt;b&gt;&amp;&quot;&apos; &#64; &#x40;</select>";
         let (segments, diagnostics, truncated) = run_capture(source);
         assert!(!truncated);
         assert!(diagnostics.is_empty());
-        assert_eq!(segments.len(), 1);
-        let BodySegment::Text(seg) = &segments[0] else {
-            panic!("expected a text segment")
+        assert!(
+            segments.len() > 1,
+            "expected multiple entity-split segments"
+        );
+
+        let mut decoded = String::new();
+        let mut prev_end: Option<u32> = None;
+        for seg in &segments {
+            let BodySegment::Text(seg) = seg else {
+                panic!("expected only text segments")
+            };
+            if let Some(prev_end) = prev_end {
+                assert_eq!(
+                    seg.raw_span.start, prev_end,
+                    "segments must be contiguous, no gaps/overlaps"
+                );
+            }
+            prev_end = Some(seg.raw_span.end);
+            decoded.push_str(&seg.decoded);
+        }
+        assert_eq!(decoded, "a <b>&\"' @ @");
+
+        let first = segments.first().unwrap();
+        let BodySegment::Text(first) = first else {
+            unreachable!()
         };
-        assert_eq!(seg.decoded, "a <b>&\"' @ @");
-        let ByteSpan { start, end } = seg.raw_span;
+        let last = segments.last().unwrap();
+        let BodySegment::Text(last) = last else {
+            unreachable!()
+        };
         assert_eq!(
-            &source[start as usize..end as usize],
+            &source[first.raw_span.start as usize..last.raw_span.end as usize],
             "a &lt;b&gt;&amp;&quot;&apos; &#64; &#x40;"
         );
-        assert_ne!(&source[start as usize..end as usize], seg.decoded);
     }
 
     #[test]
     fn mm_08_undefined_entity_degrades_gracefully_with_diagnostic() {
+        // A10 (cold code review): "a&nbsp;b" now tokenizes as three
+        // segments (Text "a", GeneralRef "&nbsp;", Text "b") rather than
+        // one -- see the comment on the test above. Concatenated decoded
+        // content and diagnostic behavior are unchanged.
         let source = "<select id=\"x\">a&nbsp;b</select>";
         let (segments, diagnostics, truncated) = run_capture(source);
         assert!(!truncated);
-        assert_eq!(segments.len(), 1);
-        let BodySegment::Text(seg) = &segments[0] else {
-            panic!("expected a text segment")
-        };
+        let decoded: String = segments
+            .iter()
+            .map(|seg| {
+                let BodySegment::Text(seg) = seg else {
+                    panic!("expected only text segments")
+                };
+                seg.decoded.as_str()
+            })
+            .collect();
         // Degrades to the raw (unresolved) text rather than dropping it.
-        assert_eq!(seg.decoded, "a&nbsp;b");
+        assert_eq!(decoded, "a&nbsp;b");
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, DiagCode::InvalidEntity);
+        assert_eq!(
+            diagnostics[0].span,
+            Some(ByteSpan {
+                start: source.find("&nbsp;").unwrap() as u32,
+                end: (source.find("&nbsp;").unwrap() + "&nbsp;".len()) as u32,
+            }),
+            "diagnostic span should point at exactly the bad reference, not the whole text run"
+        );
     }
 
     #[test]
@@ -3028,14 +3110,30 @@ mod tests {
 
     #[test]
     fn b21_trim_leading_strip_over_entity_decoded_text_does_not_fabricate_offset() {
-        // Cold code review B21: with_prefix's strip-length extrapolation
-        // assumed 1 decoded byte == 1 raw byte, which is false once entity
-        // decoding shrinks/expands byte counts (`&#x41;` is 6 raw bytes
-        // for one decoded 'A'). Stripping the leading "AND " override
-        // match used to extrapolate straight into the middle of the
-        // `&#x41;` entity's own raw bytes -- a precise-looking but
-        // entirely fabricated offset. It must now fall back to the
-        // segment's own (honest) start instead.
+        // Cold code review B21, revised for A10: with_prefix's
+        // strip-length extrapolation assumed 1 decoded byte == 1 raw
+        // byte, which is false once entity decoding shrinks/expands byte
+        // counts (`&#x41;` is 6 raw bytes for one decoded 'A'). B21
+        // originally made this fall back to the whole segment's coarse
+        // start, because quick-xml 0.37 tokenized the entire
+        // "&#x41;ND widget_name = 1" run as one `Event::Text` blob with a
+        // single unescape() call, giving no finer-grained information.
+        //
+        // quick-xml 0.41 (A10) tokenizes an entity/character reference as
+        // its own `Event::GeneralRef`, separate from the surrounding
+        // literal text (see parse.rs's `Ok(Event::GeneralRef(..))` arm).
+        // So this source now captures as two segments -- the entity
+        // itself (1 decoded byte from 6 raw bytes, non-verbatim) and
+        // "ND widget_name = 1" (verbatim, raw byte-for-byte identical to
+        // decoded) -- and with_prefix's honest byte-comparison check (see
+        // its own comment) can correctly verify that stripping into the
+        // *verbatim* second segment is safe, landing on the exact raw
+        // offset right after the entity reference, not a fabricated one.
+        // This is strictly more precise than the old coarse fallback, not
+        // a regression: verified below by slicing the original bytes at
+        // that offset and confirming it's exactly where "widget_name"
+        // starts (i.e. exactly after "AND " in the conceptual decoded
+        // text, `len("&#x41;ND ") == 9` raw bytes for 4 decoded ones).
         let source = r#"<mapper namespace="x">
             <select id="a"><trim prefixOverrides="AND |OR ">&#x41;ND widget_name = 1</trim></select>
         </mapper>"#;
@@ -3045,6 +3143,7 @@ mod tests {
         assert_eq!(vs[0].text.text, "widget_name = 1");
 
         let entity_start = source.find("&#x41;").expect("entity in source") as u32;
+        let expected_raw = entity_start + "&#x41;ND ".len() as u32;
         let (_, raw) = vs[0]
             .text
             .span_map
@@ -3052,15 +3151,18 @@ mod tests {
             .find(|(off, _)| *off == 0)
             .expect("span_map entry at offset 0");
         assert_eq!(
-            *raw, entity_start,
-            "mapped offset must be the segment's own (coarse) start -- the position \
-             of the entity itself -- not a fabricated offset extrapolated into the \
-             middle of the entity's raw bytes"
+            *raw, expected_raw,
+            "mapped offset must be the exact raw position right after the stripped \
+             \"AND \" (verified honest via with_prefix's byte-comparison check), not \
+             a fabricated offset"
         );
         // Slice the *original* bytes at that offset to prove it's a real,
-        // meaningful position (the start of the entity reference), not an
+        // meaningful position (the start of "widget_name"), not an
         // arbitrary byte count into unrelated content.
-        assert_eq!(&source[*raw as usize..(*raw as usize + 6)], "&#x41;");
+        assert_eq!(
+            &source[*raw as usize..(*raw as usize + "widget_name".len())],
+            "widget_name"
+        );
     }
 
     // A7 (cold code review, major): DiagCode::IncludeAtWrapperBoundary is

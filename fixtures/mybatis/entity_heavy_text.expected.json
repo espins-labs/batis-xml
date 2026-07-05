@@ -27,15 +27,51 @@
           "variants": [
             {
               "text": {
-                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE widget_name <> '' AND category_flag & 1 = 1\n    \n    AND description != '&nbsp;test&#64;example'\n  ",
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE widget_name <> '' AND category_flag & 1 = 1\n    \n    AND description != '&nbsp;test@example'\n  ",
                 "span_map": [
                   [
                     0,
                     293
                   ],
                   [
+                    74,
+                    367
+                  ],
+                  [
+                    75,
+                    371
+                  ],
+                  [
+                    76,
+                    375
+                  ],
+                  [
+                    98,
+                    397
+                  ],
+                  [
+                    99,
+                    402
+                  ],
+                  [
                     110,
                     490
+                  ],
+                  [
+                    135,
+                    515
+                  ],
+                  [
+                    141,
+                    521
+                  ],
+                  [
+                    145,
+                    525
+                  ],
+                  [
+                    146,
+                    530
                   ]
                 ]
               },
@@ -65,10 +101,10 @@
     {
       "code": "invalid_entity",
       "span": {
-        "start": 490,
-        "end": 541
+        "start": 515,
+        "end": 521
       },
-      "message": "unresolvable entity reference: at 26..30: unrecognized entity `nbsp`"
+      "message": "unresolvable entity reference: at 1..5: unrecognized entity `nbsp`"
     }
   ]
 }

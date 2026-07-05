@@ -76,5 +76,18 @@ jobs:
       # with that exact toolchain via rustup (core crate only, per
       # default-members -- the wasm crate's wasm-bindgen dependency isn't
       # part of this promise).
-      - run: rustup toolchain install 1.75 --profile minimal
+      - run: rustup toolchain install 1.79 --profile minimal
       - run: cargo hack check --rust-version
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - uses: Swatinem/rust-cache@v2
+      # A10 (cold code review, publication blocker): RUSTSEC-2026-0194/
+      # -0195 flagged quick-xml < 0.41 (fixed by the same commit that
+      # bumped it here) -- blocking so a future dependency advisory
+      # doesn't silently reach a release.
+      - run: cargo audit
