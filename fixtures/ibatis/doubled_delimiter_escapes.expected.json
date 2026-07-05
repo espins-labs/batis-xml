@@ -1,0 +1,80 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 166,
+          "end": 367
+        },
+        "id": {
+          "value": "widgetDAO.selectIntoTempTable",
+          "span": {
+            "start": 178,
+            "end": 207
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name INTO #widget_tmp\n    FROM demo_widget WHERE group_code = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    251
+                  ],
+                  [
+                    41,
+                    293
+                  ],
+                  [
+                    93,
+                    355
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 225,
+            "end": 228
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 243,
+            "end": 249
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "groupCode",
+            "span": {
+              "start": 345,
+              "end": 354
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

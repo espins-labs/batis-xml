@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <update id="updateWidgetLeadingComma">
+    UPDATE demo_widget
+    <set>, widget_name = #{name}</set>
+    WHERE widget_id = #{id}
+  </update>
+</mapper>

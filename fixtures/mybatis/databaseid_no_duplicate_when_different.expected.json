@@ -1,0 +1,126 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 387
+        },
+        "id": {
+          "value": "selectWidgetPage",
+          "span": {
+            "start": 221,
+            "end": 237
+          }
+        },
+        "database_id": {
+          "value": "oracle",
+          "span": {
+            "start": 251,
+            "end": 257
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE ROWNUM <= 10\n  ",
+                "span_map": [
+                  [
+                    0,
+                    302
+                  ],
+                  [
+                    65,
+                    367
+                  ],
+                  [
+                    66,
+                    371
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 271,
+            "end": 300
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 390,
+          "end": 554
+        },
+        "id": {
+          "value": "selectWidgetPage",
+          "span": {
+            "start": 402,
+            "end": 418
+          }
+        },
+        "database_id": {
+          "value": "mysql",
+          "span": {
+            "start": 432,
+            "end": 437
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget LIMIT 10\n  ",
+                "span_map": [
+                  [
+                    0,
+                    482
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 451,
+            "end": 480
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <select id="selectWidgetsByStatusNoDefault" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name FROM demo_widget
+    <choose>
+      <when test="status == 'ACTIVE'">WHERE status = 'A'</when>
+      <when test="status == 'INACTIVE'">WHERE status = 'I'</when>
+    </choose>
+  </select>
+</mapper>

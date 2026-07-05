@@ -1,0 +1,83 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 343,
+          "end": 499
+        },
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 355,
+            "end": 367
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    412
+                  ],
+                  [
+                    71,
+                    487
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 381,
+            "end": 410
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 484,
+              "end": 486
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": [
+    {
+      "code": "unknown_element",
+      "span": {
+        "start": 209,
+        "end": 340
+      },
+      "message": "unrecognized statement-level element <slect> -- not a known statement/fragment/resultMap tag, and not one of this crate's known-ignorable elements; ignored (possible typo?)"
+    }
+  ]
+}

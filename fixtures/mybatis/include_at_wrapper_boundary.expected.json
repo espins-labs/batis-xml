@@ -1,0 +1,135 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 258,
+          "end": 460
+        },
+        "id": {
+          "value": "selectActiveWidgets",
+          "span": {
+            "start": 270,
+            "end": 289
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget\n    WHERE \n      /* batis:include(activeFilter) */\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    334
+                  ],
+                  [
+                    56,
+                    390
+                  ],
+                  [
+                    62,
+                    397
+                  ],
+                  [
+                    69,
+                    404
+                  ],
+                  [
+                    102,
+                    435
+                  ],
+                  [
+                    107,
+                    448
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [
+          {
+            "value": {
+              "raw": "activeFilter",
+              "target": {
+                "local": "activeFilter"
+              }
+            },
+            "span": {
+              "start": 404,
+              "end": 435
+            }
+          }
+        ],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 303,
+            "end": 332
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [
+      {
+        "span": {
+          "start": 209,
+          "end": 255
+        },
+        "id": {
+          "value": "activeFilter",
+          "span": {
+            "start": 218,
+            "end": 230
+          }
+        },
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "status = 'ACTIVE'",
+                "span_map": [
+                  [
+                    0,
+                    232
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": []
+      }
+    ],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": [
+    {
+      "code": "include_at_wrapper_boundary",
+      "span": {
+        "start": 404,
+        "end": 435
+      },
+      "message": "<include> is the first or last non-whitespace content inside <where> -- since <include> expands before dynamic evaluation in MyBatis/iBatis, re-apply where's leading AND/OR or trailing-comma rule to the substituted fragment text (a wrapper whose only content is this include must be treated as conditional)"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 8915
+        },
+        "id": {
+          "value": "selectWidgetDeeplyNested",
+          "span": {
+            "start": 221,
+            "end": 245
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "union": {
+            "text": {
+              "text": "\n    SELECT 1 \n  ",
+              "span_map": [
+                [
+                  0,
+                  290
+                ],
+                [
+                  14,
+                  8903
+                ]
+              ]
+            },
+            "branch_count": 33
+          }
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 259,
+            "end": 288
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": [
+    {
+      "code": "nesting_limit_exceeded",
+      "span": null,
+      "message": "dynamic-tag nesting exceeds the depth cap of 256; remaining subtree treated as opaque (no text contribution)"
+    },
+    {
+      "code": "branch_limit_exceeded",
+      "span": null,
+      "message": "branch combinations (33+) exceed the cap of 32; falling back to a union of all branch text"
+    }
+  ]
+}

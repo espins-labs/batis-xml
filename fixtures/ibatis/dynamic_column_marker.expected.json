@@ -1,0 +1,76 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 166,
+          "end": 341
+        },
+        "id": {
+          "value": "widgetDAO.selectSorted",
+          "span": {
+            "start": 178,
+            "end": 200
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name\n    FROM demo_widget\n    ORDER BY __BATIS_DYN__ ASC\n  ",
+                "span_map": [
+                  [
+                    0,
+                    244
+                  ],
+                  [
+                    82,
+                    325
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 218,
+            "end": 221
+          }
+        },
+        "result_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 236,
+            "end": 242
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "sortColumn",
+            "span": {
+              "start": 314,
+              "end": 324
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

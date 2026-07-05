@@ -1,0 +1,106 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 390,
+          "end": 531
+        },
+        "id": {
+          "value": "selectWidget",
+          "span": {
+            "start": 402,
+            "end": 414
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT widget_id, widget_name FROM demo_widget WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    444
+                  ],
+                  [
+                    71,
+                    519
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": {
+          "value": "widgetResultMap",
+          "span": {
+            "start": 427,
+            "end": 442
+          }
+        },
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 516,
+              "end": 518
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": [
+      {
+        "span": {
+          "start": 209,
+          "end": 387
+        },
+        "id": {
+          "value": "widgetResultMap",
+          "span": {
+            "start": 224,
+            "end": 239
+          }
+        },
+        "type_ref": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 247,
+            "end": 276
+          }
+        },
+        "extends": null,
+        "mappings": [
+          {
+            "column": "widget_id",
+            "property": "id"
+          },
+          {
+            "column": "widget_name",
+            "property": "name"
+          }
+        ]
+      }
+    ]
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

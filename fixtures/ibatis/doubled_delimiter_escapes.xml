@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE sqlMap PUBLIC "-//ibatis.apache.org//DTD SQL Map 2.0//EN"
+  "http://ibatis.apache.org/dtd/sql-map-2.dtd">
+<sqlMap>
+  <select id="widgetDAO.selectIntoTempTable" parameterClass="map" resultClass="widget">
+    SELECT widget_id, widget_name INTO ##widget_tmp
+    FROM demo_widget WHERE group_code = #groupCode#
+  </select>
+</sqlMap>

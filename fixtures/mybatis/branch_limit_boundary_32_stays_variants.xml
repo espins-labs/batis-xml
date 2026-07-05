@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.WidgetMapper">
+  <select id="searchWidgetsFiveFilters" resultType="com.example.demo.model.Widget">
+    SELECT widget_id, widget_name
+    FROM demo_widget
+    <where>
+      <if test="a != null">AND a = #{a}</if>
+      <if test="b != null">AND b = #{b}</if>
+      <if test="c != null">AND c = #{c}</if>
+      <if test="d != null">AND d = #{d}</if>
+      <if test="e != null">AND e = #{e}</if>
+    </where>
+  </select>
+</mapper>

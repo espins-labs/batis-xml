@@ -1,0 +1,67 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [],
+    "fragments": [],
+    "result_maps": [
+      {
+        "span": {
+          "start": 209,
+          "end": 768
+        },
+        "id": {
+          "value": "widgetWithOwnerAndTagsMap",
+          "span": {
+            "start": 224,
+            "end": 249
+          }
+        },
+        "type_ref": {
+          "value": {
+            "raw": "com.example.demo.model.Widget"
+          },
+          "span": {
+            "start": 257,
+            "end": 286
+          }
+        },
+        "extends": null,
+        "mappings": [
+          {
+            "column": "widget_id",
+            "property": "id"
+          },
+          {
+            "column": "widget_name",
+            "property": "name"
+          },
+          {
+            "column": "owner_id",
+            "property": "id"
+          },
+          {
+            "column": "owner_name",
+            "property": "name"
+          },
+          {
+            "column": "tag_id",
+            "property": "id"
+          },
+          {
+            "column": "tag_label",
+            "property": "label"
+          }
+        ]
+      }
+    ]
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

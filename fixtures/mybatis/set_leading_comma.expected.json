@@ -1,0 +1,85 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "update",
+        "span": {
+          "start": 209,
+          "end": 349
+        },
+        "id": {
+          "value": "updateWidgetLeadingComma",
+          "span": {
+            "start": 221,
+            "end": 245
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    UPDATE demo_widget\n    SET widget_name = ?\n    WHERE widget_id = ?\n  ",
+                "span_map": [
+                  [
+                    0,
+                    247
+                  ],
+                  [
+                    28,
+                    275
+                  ],
+                  [
+                    32,
+                    282
+                  ],
+                  [
+                    47,
+                    309
+                  ],
+                  [
+                    71,
+                    337
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "name",
+            "span": {
+              "start": 298,
+              "end": 302
+            }
+          },
+          {
+            "value": "id",
+            "span": {
+              "start": 334,
+              "end": 336
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}

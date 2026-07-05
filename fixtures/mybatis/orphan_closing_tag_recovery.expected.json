@@ -1,0 +1,131 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.broken.OrphanCloseMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "select",
+        "span": {
+          "start": 209,
+          "end": 277
+        },
+        "id": {
+          "value": "beforeOrphan",
+          "span": {
+            "start": 221,
+            "end": 233
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT 1\n  ",
+                "span_map": [
+                  [
+                    0,
+                    252
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 247,
+            "end": 250
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 304,
+          "end": 371
+        },
+        "id": {
+          "value": "afterOrphan",
+          "span": {
+            "start": 316,
+            "end": 327
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    SELECT 2\n  ",
+                "span_map": [
+                  [
+                    0,
+                    346
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "map"
+          },
+          "span": {
+            "start": 341,
+            "end": 344
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": [
+    {
+      "code": "unclosed_tag",
+      "span": {
+        "start": 280,
+        "end": 280
+      },
+      "message": "orphan or mismatched closing tag ignored: ill-formed document: expected `</mapper>`, but `</thisWasNeverOpened>` was found"
+    },
+    {
+      "code": "unclosed_tag",
+      "span": {
+        "start": 372,
+        "end": 372
+      },
+      "message": "orphan or mismatched closing tag ignored: ill-formed document: close tag `</mapper>` does not match any open tag"
+    },
+    {
+      "code": "unclosed_tag",
+      "span": {
+        "start": 149,
+        "end": 382
+      },
+      "message": "root element was never closed"
+    }
+  ]
+}

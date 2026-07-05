@@ -1,0 +1,173 @@
+{
+  "dialect": "mybatis",
+  "mapper": {
+    "namespace": {
+      "value": "com.example.demo.mapper.WidgetMapper",
+      "span": {
+        "start": 168,
+        "end": 204
+      }
+    },
+    "statements": [
+      {
+        "kind": "insert",
+        "span": {
+          "start": 209,
+          "end": 440
+        },
+        "id": {
+          "value": "insertWidgetColumns",
+          "span": {
+            "start": 221,
+            "end": 240
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    INSERT INTO demo_widget\n    \n  ",
+                "span_map": [
+                  [
+                    0,
+                    242
+                  ],
+                  [
+                    33,
+                    428
+                  ]
+                ]
+              },
+              "conditions": []
+            },
+            {
+              "text": {
+                "text": "\n    INSERT INTO demo_widget\n    ( \n      \n      status )\n  ",
+                "span_map": [
+                  [
+                    0,
+                    242
+                  ],
+                  [
+                    33,
+                    275
+                  ],
+                  [
+                    35,
+                    323
+                  ],
+                  [
+                    42,
+                    371
+                  ],
+                  [
+                    49,
+                    404
+                  ],
+                  [
+                    55,
+                    275
+                  ],
+                  [
+                    57,
+                    428
+                  ]
+                ]
+              },
+              "conditions": [
+                "status != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    INSERT INTO demo_widget\n    ( \n      widget_name )\n  ",
+                "span_map": [
+                  [
+                    0,
+                    242
+                  ],
+                  [
+                    33,
+                    275
+                  ],
+                  [
+                    35,
+                    323
+                  ],
+                  [
+                    42,
+                    354
+                  ],
+                  [
+                    53,
+                    275
+                  ],
+                  [
+                    55,
+                    428
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null"
+              ]
+            },
+            {
+              "text": {
+                "text": "\n    INSERT INTO demo_widget\n    ( \n      widget_name,\n      status )\n  ",
+                "span_map": [
+                  [
+                    0,
+                    242
+                  ],
+                  [
+                    33,
+                    275
+                  ],
+                  [
+                    35,
+                    323
+                  ],
+                  [
+                    42,
+                    354
+                  ],
+                  [
+                    54,
+                    371
+                  ],
+                  [
+                    61,
+                    404
+                  ],
+                  [
+                    67,
+                    275
+                  ],
+                  [
+                    69,
+                    428
+                  ]
+                ]
+              },
+              "conditions": [
+                "name != null",
+                "status != null"
+              ]
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": []
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "encoding": "UTF-8",
+  "diagnostics": []
+}
