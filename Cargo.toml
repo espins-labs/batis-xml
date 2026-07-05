@@ -17,14 +17,18 @@ repository = "https://github.com/espins-labs/batis-xml"
 keywords = ["mybatis", "ibatis", "sql", "parser", "xml"]
 categories = ["parser-implementations"]
 # CLAUDE.md is an internal agent working agreement, not user-facing; .github/
-# is CI/issue-template plumbing. fixtures/hostile/* is deliberately NOT
-# excluded (cold review B11): it used to be, but that broke
+# is CI/issue-template plumbing; rust-toolchain.toml pins a local dev/CI
+# toolchain version, irrelevant (and potentially confusing -- it could
+# shadow a consumer's own toolchain file) once vendored into a downstream
+# build; release-plz.toml only matters to this repo's own release
+# automation (B25, cold code review). fixtures/hostile/* is deliberately
+# NOT excluded (cold review B11): it used to be, but that broke
 # hostile_never_panics for anyone building/testing straight from the
 # published crate source (e.g. downstream distro packagers) -- the "never
 # panics" guarantee is a headline claim of this crate, so the test needs
 # real fixtures to mean anything there too. The files are tiny; the
 # package-size cost is negligible.
-exclude = ["CLAUDE.md", ".github/"]
+exclude = ["CLAUDE.md", ".github/", "rust-toolchain.toml", "release-plz.toml"]
 
 [package.metadata.docs.rs]
 all-features = true

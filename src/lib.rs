@@ -15,6 +15,12 @@ mod placeholder;
 
 pub use model::*;
 
+/// Raw input byte cap (B25, cold code review: previously only documented
+/// as "the 10 MB cap" in prose comments, not a checkable value). Input
+/// over this size is rejected before decoding is even attempted — see
+/// [`DiagCode::OversizeInput`], [`parse_bytes`], and [`detect_dialect`].
+pub const MAX_INPUT_BYTES: usize = parse::OVERSIZE_LIMIT;
+
 /// Parses an already-decoded string. Never fails — every anomaly is
 /// reported through [`ParseResult::diagnostics`].
 pub fn parse(source: &str) -> ParseResult {
@@ -28,7 +34,7 @@ pub fn parse_bytes(bytes: &[u8]) -> ParseResult {
     // Pre-decode byte cap (cold review B5): checking only post-decode (as
     // parse_str still does, defense-in-depth) means a huge input (e.g.
     // 1 GB) pays for a full decode and allocation before being rejected.
-    if bytes.len() > parse::OVERSIZE_LIMIT {
+    if bytes.len() > MAX_INPUT_BYTES {
         return oversize_result(bytes.len());
     }
     let (source, mut diags) = encoding::decode(bytes);
@@ -48,7 +54,7 @@ pub fn detect_dialect(bytes: &[u8]) -> Dialect {
     // Same pre-decode byte cap as parse_bytes (cold review B5) -- a "cheap
     // pre-check" that still decodes an arbitrarily huge input first isn't
     // cheap.
-    if bytes.len() > parse::OVERSIZE_LIMIT {
+    if bytes.len() > MAX_INPUT_BYTES {
         return Dialect::Unknown;
     }
     let (source, _diags) = encoding::decode(bytes);
@@ -64,7 +70,7 @@ fn oversize_result(byte_len: usize) -> ParseResult {
             span: None,
             message: format!(
                 "input is {byte_len} bytes, over the {}-byte cap",
-                parse::OVERSIZE_LIMIT
+                MAX_INPUT_BYTES
             ),
         }],
     }
@@ -80,7 +86,7 @@ mod tests {
 
     #[test]
     fn parse_bytes_rejects_oversize_input_before_decoding() {
-        let huge = vec![b'x'; parse::OVERSIZE_LIMIT + 1];
+        let huge = vec![b'x'; MAX_INPUT_BYTES + 1];
         let result = parse_bytes(&huge);
         assert_eq!(result.dialect, Dialect::Unknown);
         assert!(result.mapper.is_none());
@@ -90,8 +96,16 @@ mod tests {
 
     #[test]
     fn detect_dialect_rejects_oversize_input_before_decoding() {
-        let huge = vec![b'x'; parse::OVERSIZE_LIMIT + 1];
+        let huge = vec![b'x'; MAX_INPUT_BYTES + 1];
         assert_eq!(detect_dialect(&huge), Dialect::Unknown);
+    }
+
+    #[test]
+    fn b25_max_input_bytes_is_public_and_matches_the_documented_ten_mib_cap() {
+        // Cold code review B25: the cap was previously only a prose claim
+        // ("the 10 MB cap") -- now a checkable public constant callers can
+        // size their own pre-checks against without guessing.
+        assert_eq!(MAX_INPUT_BYTES, 10 * 1024 * 1024);
     }
 
     #[test]

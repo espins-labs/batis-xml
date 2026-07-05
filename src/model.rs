@@ -113,6 +113,12 @@ pub enum DiagCode {
     DanglingRefid,
     BranchLimitExceeded,
     UnknownElement,
+    /// Input exceeded [`crate::MAX_INPUT_BYTES`] (B25, cold code review: was
+    /// only documented as "the 10 MB cap" in prose; now also a public,
+    /// checkable constant). Emitted by both `parse`/`parse_bytes` (with
+    /// `mapper: None`) and `detect_dialect` (with `Dialect::Unknown`)
+    /// *before* any decoding is attempted, so the cap applies to raw input
+    /// size regardless of encoding.
     OversizeInput,
     /// Recovery rule 3: first value wins, duplicate is reported here.
     DuplicateAttribute,
