@@ -35,11 +35,14 @@ mapper XML ──▶ batis-xml ──▶ { statements, flattened SQL variants,
 
 ## Example
 
-```rust
+```rust,no_run
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let result = batis_xml::parse_bytes(&std::fs::read("OrderMapper.xml")?);
 for stmt in &result.mapper.as_ref().unwrap().statements {
     println!("{:?} {:?}", stmt.kind, stmt.id);
 }
+# Ok(())
+# }
 ```
 
 ## Include expansion order — read this before substituting fragments

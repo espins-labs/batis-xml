@@ -1,23 +1,11 @@
-//! # batis-xml
-//!
-//! Parser and dynamic-SQL flattener for **MyBatis** and **iBatis** mapper XML.
-//!
-//! - Returns partial results plus diagnostics on broken legacy input —
-//!   never panics, never returns `Err` (every anomaly is a [`Diagnostic`]).
-//! - Flattens dynamic tags (`<if>`, `<choose>`, iBatis `<iterate>` /
-//!   `<isNotEmpty>`, …) into concrete SQL shape candidates ([`SqlText`]).
-//! - The serde serialization of the output model is a language-neutral
-//!   schema: ports to other languages validate against the conformance
-//!   corpus in `fixtures/` (input XML → expected JSON pairs), not against
-//!   this codebase.
-//! - Pure-Rust dependencies only — builds clean for `wasm32-unknown-unknown`.
-//!
-//! ## Status
-//!
-//! MM-01 through MM-14 are complete and validated against a 195-file
-//! real-world legacy mapper corpus (100% parse success; statement/binding
-//! accuracy 98.9% MyBatis / 87.6% iBatis against an 85% bar). See the
-//! crate's `README.md` for details.
+// B24 (cold code review): the crate doc IS the README, verbatim -- rather
+// than maintaining a second, hand-written summary that can (and did) drift
+// out of sync, and whose own code example was never compile-checked (a
+// bare `?` in what rustdoc treats as `fn main()`, plus a `std::fs::read`
+// that would fail at doctest run time since no such file exists). Making
+// the README the single source of crate docs means `cargo test --doc`
+// exercises its example directly.
+#![doc = include_str!("../README.md")]
 
 mod encoding;
 mod flatten;
