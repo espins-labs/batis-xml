@@ -40,6 +40,36 @@ for stmt in &result.mapper.as_ref().unwrap().statements {
 }
 ```
 
+## Include expansion order — read this before substituting fragments
+
+**`<include>` markers are left in place, unexpanded** — `IncludeRef` gives
+you the raw `refid` plus a best-effort `IncludeTarget`, but resolving and
+substituting the referenced `<sql>` fragment's text is the consumer's job.
+
+MyBatis (and iBatis) expand `<include>` **before** evaluating
+`<where>`/`<set>`/`<trim>` dynamic semantics, so a wrapper's leading
+`AND`/`OR` strip or trailing-comma strip runs against the fragment's
+*actual, substituted* text. This crate flattens with the include token
+still sitting where it was in the XML, so if you substitute fragment text
+in **after** flattening, you must redo that part of the work yourself:
+
+- **Re-apply the leading-AND/OR and trailing-comma cleanup** to the text
+  you substitute in place of an include token that ends up first/last
+  inside a `<where>`/`<set>`/`<trim>` wrapper — otherwise you can end up
+  with `WHERE AND x = 1` (fragment started with `AND `) or a comma
+  `<set>` was supposed to strip but never saw.
+- **Treat a wrapper whose only content is an include token as
+  conditional** — the fragment might expand to nothing (or to
+  whitespace), in which case the whole wrapper should contribute nothing,
+  exactly like an empty `<if>` branch would.
+
+`DiagCode::IncludeAtWrapperBoundary` flags the exact spot this bites: it's
+emitted whenever an `<include>` is the first or last non-whitespace direct
+child of a `<where>`/`<set>`/`<trim>`, so you can find every place that
+needs the extra handling above without re-deriving it from the XML by
+hand. See `IncludeTarget`'s rustdoc for the same contract from the type's
+point of view, and `wasm/README.md` for the npm-consumer framing.
+
 ## Status
 
 MM-01 through MM-14 are complete: parsing, dynamic-SQL flattening,

@@ -108,6 +108,17 @@ pub enum DiagCode {
     /// subtree is treated as opaque (no text/mapping contribution) rather
     /// than risk a stack overflow. Cold code review B2/B3, 2026-07-05.
     NestingLimitExceeded,
+    /// An `<include>` is the first or last non-whitespace content directly
+    /// inside a `<where>`/`<set>`/`<trim>` wrapper. MyBatis expands
+    /// `<include>` *before* dynamic evaluation, so the wrapper's own
+    /// leading-AND/OR or trailing-comma rule sees the fragment's actual
+    /// substituted text; this crate flattens with the include token still
+    /// in place, so a consumer substituting the fragment afterward must
+    /// re-apply that rule themselves (and treat a wrapper whose only
+    /// content is this include as conditional, since the fragment may
+    /// expand to nothing). See the README's include section and
+    /// `IncludeTarget`'s rustdoc. Cold code review A7, 2026-07-05.
+    IncludeAtWrapperBoundary,
     /// Forward-compat deserialization fallback: any code string this build
     /// doesn't recognize (e.g. JSON produced by a newer batis-xml version)
     /// lands here instead of failing to deserialize. Never produced by
@@ -241,6 +252,27 @@ pub struct IncludeRef {
 /// Closed set: an exhaustive `match` is a consumer feature. `Dynamic`
 /// already covers "can't be resolved statically" -- there's no third kind
 /// of refid target. Adding a variant here would be a v2.
+///
+/// ## Expansion-order contract (A7, cold code review)
+///
+/// This crate never substitutes the referenced `<sql>` fragment's text in
+/// place of the `<include>` token -- resolving `IncludeTarget` to actual
+/// SQL and splicing it in is entirely the consumer's job. MyBatis/iBatis
+/// themselves expand `<include>` *before* evaluating `<where>`/`<set>`/
+/// `<trim>` dynamic semantics, so a wrapper's leading-AND/OR strip or
+/// trailing-comma strip sees the fragment's real, substituted text.
+/// Flattening here with the token still in place means a consumer
+/// substituting fragment text in afterward must, at minimum:
+///
+/// - re-apply the wrapper's leading-AND/OR / trailing-comma cleanup to the
+///   substituted text when the include token was first/last inside a
+///   `<where>`/`<set>`/`<trim>`, and
+/// - treat a wrapper whose only content is an include token as
+///   conditional (the fragment may expand to nothing).
+///
+/// `DiagCode::IncludeAtWrapperBoundary` flags exactly the spots this
+/// applies to -- see the README's "Include expansion order" section for
+/// the full write-up.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

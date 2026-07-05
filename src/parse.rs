@@ -2910,6 +2910,89 @@ mod tests {
         assert_eq!(vs[0].text.text, "SELECT 1a = 1 END");
     }
 
+    // A7 (cold code review, major): DiagCode::IncludeAtWrapperBoundary is
+    // emitted when an <include> is the first or last non-whitespace direct
+    // child of a where/set/trim wrapper -- exactly the spot where MyBatis's
+    // expand-before-evaluate order can bite a consumer who substitutes the
+    // fragment text in afterward.
+
+    #[test]
+    fn a7_include_only_content_of_where_emits_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">status = 'Y'</sql>
+            <select id="a">SELECT 1<where><include refid="frag"/></where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
+    #[test]
+    fn a7_include_first_in_set_emits_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">name = #{name},</sql>
+            <update id="a">UPDATE t <set><include refid="frag"/>age = #{age}</set></update>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
+    #[test]
+    fn a7_include_last_in_trim_emits_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">status = 'Y'</sql>
+            <select id="a"><trim prefix="WHERE">a = 1 AND <include refid="frag"/></trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
+    #[test]
+    fn a7_no_include_in_where_does_not_emit_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <select id="a">SELECT 1<where>status = 'Y'</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
+    #[test]
+    fn a7_include_in_the_middle_of_where_does_not_emit_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">status = 'Y'</sql>
+            <select id="a">SELECT 1<where>a = 1 AND <include refid="frag"/> AND b = 2</where></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
+    #[test]
+    fn a7_include_outside_any_wrapper_does_not_emit_boundary_diagnostic() {
+        let source = r#"<mapper namespace="x">
+            <sql id="frag">status = 'Y'</sql>
+            <select id="a">SELECT 1 WHERE <include refid="frag"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(!result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagCode::IncludeAtWrapperBoundary));
+    }
+
     #[test]
     fn mm_06b_foreach_wraps_once_ignoring_separator_no_branch_factor() {
         let source = r#"<mapper namespace="x">

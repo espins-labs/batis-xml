@@ -22,7 +22,7 @@ or with a bundler expecting `--target web`/`--target bundler` output
 (`fetch`-based instantiation, ESM). That's a separate build target to
 add later, not a difference in the Rust source.
 
-## Three things that will bite you
+## Four things that will bite you
 
 **(a) Feed raw bytes — never a host-pre-decoded string.** Always pass the
 file's original `Buffer`/`Uint8Array` to `parse`/`detect`, not a string
@@ -65,6 +65,19 @@ const qualifiedName = statement.database_id
   ? `${namespace}.${statement.id.value}@${statement.database_id.value}`
   : `${namespace}.${statement.id.value}`;
 ```
+
+**(d) `<include>` expands *before* `<where>`/`<set>`/`<trim>` in MyBatis/
+iBatis — this crate doesn't expand it at all.** `IncludeRef` gives you the
+raw `refid` plus a best-effort `IncludeTarget`; substituting the
+referenced `<sql>` fragment's text in is on you. If you splice fragment
+text in *after* flattening (rather than before, like the real engines
+do), redo the wrapper's own cleanup against that substituted text:
+re-apply the leading-AND/OR strip or trailing-comma strip when the
+include token was first/last inside the wrapper, and treat a wrapper
+whose only content is an include token as conditional (the fragment
+might expand to nothing). `result.diagnostics` carries
+`include_at_wrapper_boundary` for every spot this applies to — see the
+core crate's README ("Include expansion order") for the full contract.
 
 ## One more thing
 

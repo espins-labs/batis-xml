@@ -27,6 +27,7 @@ export type DiagCode =
   | "invalid_entity"
   | "unterminated_placeholder"
   | "nesting_limit_exceeded"
+  | "include_at_wrapper_boundary"
   | "other";
 /**
  * Closed set: an exhaustive `match` is a consumer feature (there's no forward-compat concern the way there is for `DiagCode`/`SqlText`, since `Unknown` already covers "neither of the two known dialects"). Adding a third dialect would be a v2.
@@ -37,6 +38,14 @@ export type DiagCode =
 export type Dialect = "mybatis" | "ibatis" | "unknown";
 /**
  * Closed set: an exhaustive `match` is a consumer feature. `Dynamic` already covers "can't be resolved statically" -- there's no third kind of refid target. Adding a variant here would be a v2.
+ *
+ * ## Expansion-order contract (A7, cold code review)
+ *
+ * This crate never substitutes the referenced `<sql>` fragment's text in place of the `<include>` token -- resolving `IncludeTarget` to actual SQL and splicing it in is entirely the consumer's job. MyBatis/iBatis themselves expand `<include>` *before* evaluating `<where>`/`<set>`/ `<trim>` dynamic semantics, so a wrapper's leading-AND/OR strip or trailing-comma strip sees the fragment's real, substituted text. Flattening here with the token still in place means a consumer substituting fragment text in afterward must, at minimum:
+ *
+ * - re-apply the wrapper's leading-AND/OR / trailing-comma cleanup to the substituted text when the include token was first/last inside a `<where>`/`<set>`/`<trim>`, and - treat a wrapper whose only content is an include token as conditional (the fragment may expand to nothing).
+ *
+ * `DiagCode::IncludeAtWrapperBoundary` flags exactly the spots this applies to -- see the README's "Include expansion order" section for the full write-up.
  *
  * This interface was referenced by `ParseResult`'s JSON-Schema
  * via the `definition` "IncludeTarget".

@@ -468,6 +468,57 @@ fn expand_transparent(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec
     flatten_segments(source, &inner_segments, ctx)
 }
 
+/// A7 (cold code review, major): MyBatis expands `<include>` *before*
+/// dynamic evaluation, so a `<where>`/`<set>`/`<trim>`'s own leading-AND/OR
+/// or trailing-comma rule sees the fragment's actual substituted text.
+/// This crate flattens with the include token still in place (fragment
+/// substitution is the consumer's job downstream), so if the substituted
+/// fragment itself starts with `AND `/`OR ` or ends with a trailing comma
+/// right where the wrapper's own strip rule would have applied, the
+/// consumer can end up with `WHERE AND x = 1` or a kept trailing comma —
+/// see the README's include section and `IncludeTarget`'s rustdoc for the
+/// full contract. Rather than silently leaving this to be discovered, flag
+/// the exact spot it bites: an `<include>` that is the first or last
+/// non-whitespace direct child of a where/set/trim wrapper (a wrapper
+/// whose *only* content is an include token is exactly the "must be
+/// treated as conditional" case, since the fragment might expand to
+/// nothing).
+fn check_include_at_wrapper_boundary(
+    wrapper_name: &str,
+    inner_segments: &[BodySegment],
+    ctx: &mut Ctx,
+) {
+    let is_whitespace_only_text =
+        |texts: &[&crate::parse::TextSegment]| texts.iter().all(|t| t.decoded.trim().is_empty());
+    let runs = group_runs(inner_segments);
+    let content: Vec<&RunItem> = runs
+        .iter()
+        .filter(|item| !matches!(item, RunItem::Text(texts) if is_whitespace_only_text(texts)))
+        .collect();
+
+    let emit = |span: ByteSpan, ctx: &mut Ctx| {
+        ctx.diagnostics.push(Diagnostic {
+            code: DiagCode::IncludeAtWrapperBoundary,
+            span: Some(span),
+            message: format!(
+                "<include> is the first or last non-whitespace content inside <{wrapper_name}> -- since <include> expands before dynamic evaluation in MyBatis/iBatis, re-apply {wrapper_name}'s leading AND/OR or trailing-comma rule to the substituted fragment text (a wrapper whose only content is this include must be treated as conditional)"
+            ),
+        });
+    };
+
+    if let Some(RunItem::Tag { name, span }) = content.first() {
+        if name.as_str() == "include" {
+            emit(**span, ctx);
+            return; // don't double-report a single include that's both first and last
+        }
+    }
+    if let Some(RunItem::Tag { name, span }) = content.last() {
+        if name.as_str() == "include" {
+            emit(**span, ctx);
+        }
+    }
+}
+
 /// `<where>`: for each inner-body alternative, if its assembled text is
 /// empty/whitespace-only, the wrapper contributes nothing (no `WHERE` at
 /// all); otherwise strip one leading `AND`/`OR` (case-insensitive, word
@@ -475,6 +526,7 @@ fn expand_transparent(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec
 fn expand_where(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     ctx.diagnostics.append(&mut inner_diags);
+    check_include_at_wrapper_boundary("where", &inner_segments, ctx);
     let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
 
     let local = inner_alts
@@ -503,6 +555,7 @@ fn expand_where(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>,
 fn expand_set(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, u64> {
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     ctx.diagnostics.append(&mut inner_diags);
+    check_include_at_wrapper_boundary("set", &inner_segments, ctx);
     let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
 
     let local = inner_alts
@@ -558,6 +611,7 @@ fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, 
 
     let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
     ctx.diagnostics.append(&mut inner_diags);
+    check_include_at_wrapper_boundary("trim", &inner_segments, ctx);
     let inner_alts = flatten_segments(source, &inner_segments, ctx)?;
 
     let local = inner_alts
