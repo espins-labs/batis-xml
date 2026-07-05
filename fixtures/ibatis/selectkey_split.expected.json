@@ -1,0 +1,138 @@
+{
+  "dialect": "ibatis",
+  "mapper": {
+    "namespace": null,
+    "statements": [
+      {
+        "kind": "insert",
+        "span": {
+          "start": 166,
+          "end": 445
+        },
+        "id": {
+          "value": "widgetDAO.insertWidget",
+          "span": {
+            "start": 178,
+            "end": 200
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "span_map": [
+                  [
+                    0,
+                    226
+                  ],
+                  [
+                    5,
+                    358
+                  ],
+                  [
+                    68,
+                    424
+                  ],
+                  [
+                    71,
+                    432
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": {
+          "value": {
+            "raw": "widget"
+          },
+          "span": {
+            "start": 218,
+            "end": 224
+          }
+        },
+        "result_class": null,
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "id",
+            "span": {
+              "start": 421,
+              "end": 423
+            }
+          },
+          {
+            "value": "name",
+            "span": {
+              "start": 427,
+              "end": 431
+            }
+          }
+        ]
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 231,
+          "end": 358
+        },
+        "id": {
+          "value": "widgetDAO.insertWidget!selectKey",
+          "span": {
+            "start": 231,
+            "end": 358
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n      SELECT NEXT VALUE FOR widget_seq WHERE prefix = ?\n    ",
+                "span_map": [
+                  [
+                    0,
+                    278
+                  ],
+                  [
+                    56,
+                    341
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 272,
+            "end": 276
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": [
+          {
+            "value": "prefix",
+            "span": {
+              "start": 334,
+              "end": 340
+            }
+          }
+        ]
+      }
+    ],
+    "fragments": [],
+    "result_maps": []
+  },
+  "diagnostics": []
+}

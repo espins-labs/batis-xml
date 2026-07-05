@@ -27,7 +27,7 @@
           "variants": [
             {
               "text": {
-                "text": "\n    \n      SELECT NEXT VALUE FOR widget_seq\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
+                "text": "\n    \n    INSERT INTO demo_widget (widget_id, widget_name) VALUES (?, ?)\n  ",
                 "span_map": [
                   [
                     0,
@@ -35,18 +35,14 @@
                   ],
                   [
                     5,
-                    347
-                  ],
-                  [
-                    49,
                     403
                   ],
                   [
-                    112,
+                    68,
                     470
                   ],
                   [
-                    115,
+                    71,
                     479
                   ]
                 ]
@@ -83,6 +79,50 @@
             }
           }
         ]
+      },
+      {
+        "kind": "select",
+        "span": {
+          "start": 286,
+          "end": 403
+        },
+        "id": {
+          "value": "insertWidget!selectKey",
+          "span": {
+            "start": 286,
+            "end": 403
+          }
+        },
+        "database_id": null,
+        "sql": {
+          "variants": [
+            {
+              "text": {
+                "text": "\n      SELECT NEXT VALUE FOR widget_seq\n    ",
+                "span_map": [
+                  [
+                    0,
+                    347
+                  ]
+                ]
+              },
+              "conditions": []
+            }
+          ]
+        },
+        "includes": [],
+        "param_class": null,
+        "result_class": {
+          "value": {
+            "raw": "long"
+          },
+          "span": {
+            "start": 326,
+            "end": 330
+          }
+        },
+        "result_map_ref": null,
+        "property_paths": []
       }
     ],
     "fragments": [],

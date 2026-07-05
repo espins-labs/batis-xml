@@ -327,6 +327,19 @@ fn build_mapper(
                     // in build_statement) to the true subtree end.
                     statement.span.end = reader.buffer_position() as u32;
 
+                    // A6: pull any top-level <selectKey> children out
+                    // before the parent's own MM-05/MM-06 passes ever see
+                    // them -- otherwise its body text gets concatenated
+                    // straight into the parent SQL (see
+                    // extract_select_keys's doc comment).
+                    let (select_key_statements, segments) = extract_select_keys(
+                        source,
+                        dialect,
+                        statement.id.as_ref(),
+                        segments,
+                        &mut diagnostics,
+                    );
+
                     // MM-05: lift top-level <include> markers.
                     let (includes, mut include_diags) = lift_includes(source, dialect, &segments);
                     diagnostics.append(&mut include_diags);
@@ -346,6 +359,10 @@ fn build_mapper(
                     statement.property_paths = flattened.property_paths;
 
                     statements.push(statement);
+                    // A6: the selectKey child(ren) are appended right
+                    // after their parent -- a separate MappedStatement,
+                    // not part of the parent's SQL.
+                    statements.extend(select_key_statements);
                     if truncated {
                         break;
                     }
@@ -635,6 +652,98 @@ fn build_statement(
         property_paths: Vec::new(),
     };
     (statement, diagnostics)
+}
+
+/// A6 (cold code review, major): `<selectKey>` used to be treated as a
+/// transparent passthrough dynamic tag (flatten.rs's default arm for any
+/// tag name it doesn't recognize) -- its body text got concatenated
+/// straight into the parent statement's SQL, e.g. `SELECT NEXT VALUE FOR
+/// widget_seq INSERT INTO ...`, a two-statement mash blessed by the old
+/// `selectkey_passthrough` fixture. MyBatis instead compiles it into a
+/// wholly separate `MappedStatement` named `id + "!selectKey"` and removes
+/// the node from the parent's own SQL entirely; iBatis's `<selectKey>`
+/// (same tag name, same semantics) gets the same treatment here.
+///
+/// Extracts every top-level `<selectKey>` child from `segments`, returning
+/// the synthesized child [`Statement`]s (kind `Select`, own span, own
+/// flattened SQL/includes/property_paths) alongside the remaining segments
+/// with those markers removed, so the parent's own MM-05/MM-06 passes
+/// never see their body text. A `<selectKey>` nested inside another
+/// dynamic tag (not a direct child -- not valid MyBatis/iBatis, but not
+/// rejected either) is out of scope here and keeps the previous
+/// passthrough behavior, same as any other unrecognized nested tag.
+fn extract_select_keys(
+    source: &str,
+    dialect: Dialect,
+    parent_id: Option<&Spanned<String>>,
+    segments: Vec<BodySegment>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (Vec<Statement>, Vec<BodySegment>) {
+    let mut children = Vec::new();
+    let mut remaining = Vec::with_capacity(segments.len());
+
+    for segment in segments {
+        match segment {
+            BodySegment::DynamicTag { name, span } if name == "selectKey" => {
+                children.push(build_select_key_statement(
+                    source,
+                    dialect,
+                    parent_id,
+                    span,
+                    diagnostics,
+                ));
+            }
+            other => remaining.push(other),
+        }
+    }
+
+    (children, remaining)
+}
+
+/// Builds the synthesized child `Statement` for one `<selectKey>` marker —
+/// see [`extract_select_keys`].
+fn build_select_key_statement(
+    source: &str,
+    dialect: Dialect,
+    parent_id: Option<&Spanned<String>>,
+    span: ByteSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Statement {
+    let attrs = scan_attributes(source.as_bytes(), span.start as usize, span.end as usize);
+    // MM-09: resultType (MyBatis) / resultClass (iBatis) — same dual-name
+    // check build_statement uses for every other statement-like tag.
+    let (result_class, mut result_diags) =
+        read_class_ref(source, &attrs, &[b"resultType", b"resultClass"]);
+    diagnostics.append(&mut result_diags);
+
+    // Synthesized, never read from an `id` attribute (selectKey doesn't
+    // have one) -- no MissingStatementId diagnostic either way: a missing
+    // parent id is already covered by the parent statement's own
+    // diagnostic, and this id is derived, not user-authored.
+    let id = parent_id.map(|p| Spanned {
+        value: format!("{}!selectKey", p.value),
+        span,
+    });
+
+    let (inner_segments, mut inner_diags, _truncated) = capture_subtree(source, span);
+    diagnostics.append(&mut inner_diags);
+    let (includes, mut include_diags) = lift_includes(source, dialect, &inner_segments);
+    diagnostics.append(&mut include_diags);
+    let mut flattened = crate::flatten::flatten_body(source, dialect, &inner_segments);
+    diagnostics.append(&mut flattened.diagnostics);
+
+    Statement {
+        kind: StatementKind::Select,
+        span,
+        id,
+        database_id: None,
+        sql: flattened.sql,
+        includes: merge_includes(includes, flattened.found_includes),
+        param_class: None,
+        result_class,
+        result_map_ref: None,
+        property_paths: flattened.property_paths,
+    }
 }
 
 /// MM-09: reads the first present attribute among `names` as a
@@ -1719,6 +1828,92 @@ mod tests {
         </mapper>"#;
         let result = parse_str(source);
         insta::assert_json_snapshot!(result);
+    }
+
+    // A6 (cold code review, major): <selectKey> used to be flattened as a
+    // transparent passthrough dynamic tag, concatenating its body straight
+    // into the parent statement's SQL. It must now split into its own
+    // Statement (kind Select, id parent_id + "!selectKey", own span),
+    // excluded entirely from the parent's SQL.
+
+    #[test]
+    fn a6_mybatis_select_key_splits_into_its_own_statement() {
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long" order="BEFORE">SELECT NEXT VALUE FOR widget_seq</selectKey>
+                INSERT INTO widget (id, name) VALUES (#{id}, #{name})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+
+        let parent = &mapper.statements[0];
+        assert_eq!(parent.id.as_ref().unwrap().value, "insertWidget");
+        let parent_vs = variants(&parent.sql);
+        assert_eq!(parent_vs.len(), 1);
+        assert!(!parent_vs[0].text.text.contains("SELECT NEXT VALUE"));
+        assert!(parent_vs[0].text.text.contains("INSERT INTO widget"));
+
+        let child = &mapper.statements[1];
+        assert_eq!(child.id.as_ref().unwrap().value, "insertWidget!selectKey");
+        assert_eq!(child.kind, StatementKind::Select);
+        assert_eq!(child.result_class.as_ref().unwrap().value.raw, "long");
+        let child_vs = variants(&child.sql);
+        assert_eq!(child_vs.len(), 1);
+        assert_eq!(child_vs[0].text.text, "SELECT NEXT VALUE FOR widget_seq");
+        // Own span: covers just the <selectKey> element, nested inside (not
+        // equal to) the parent's full extent.
+        assert!(child.span.start > parent.span.start);
+        assert!(child.span.end < parent.span.end);
+    }
+
+    #[test]
+    fn a6_ibatis_select_key_splits_into_its_own_statement() {
+        let source = r#"<sqlMap>
+            <insert id="widgetDAO.insertWidget" parameterClass="widget">
+                <selectKey keyProperty="id" resultClass="long">SELECT NEXT VALUE FOR widget_seq</selectKey>
+                INSERT INTO widget (id, name) VALUES (#id#, #name#)
+            </insert>
+        </sqlMap>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        assert_eq!(mapper.statements.len(), 2);
+
+        let child = &mapper.statements[1];
+        assert_eq!(
+            child.id.as_ref().unwrap().value,
+            "widgetDAO.insertWidget!selectKey"
+        );
+        assert_eq!(child.kind, StatementKind::Select);
+        let child_vs = variants(&child.sql);
+        assert_eq!(child_vs[0].text.text, "SELECT NEXT VALUE FOR widget_seq");
+
+        let parent_vs = variants(&mapper.statements[0].sql);
+        assert!(!parent_vs[0].text.text.contains("SELECT NEXT VALUE"));
+    }
+
+    #[test]
+    fn a6_select_key_containing_placeholder_normalizes_and_records_property_path() {
+        let source = r#"<mapper namespace="x">
+            <insert id="insertWidget">
+                <selectKey keyProperty="id" resultType="long">SELECT seq_next(#{prefix})</selectKey>
+                INSERT INTO widget (id) VALUES (#{id})
+            </insert>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let child = &mapper.statements[1];
+        let child_vs = variants(&child.sql);
+        assert_eq!(child_vs[0].text.text, "SELECT seq_next(?)");
+        assert_eq!(child.property_paths.len(), 1);
+        assert_eq!(child.property_paths[0].value, "prefix");
+
+        // The parent's own property_paths cover only its own placeholder,
+        // not the (now excluded) selectKey body's.
+        let parent = &mapper.statements[0];
+        assert_eq!(parent.property_paths.len(), 1);
+        assert_eq!(parent.property_paths[0].value, "id");
     }
 
     /// Test harness for [`capture_body`]: `source` must be a single element
