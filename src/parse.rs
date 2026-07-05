@@ -399,6 +399,9 @@ fn build_mapper(
                         capture_body(source, reader, child_start as usize);
                     diagnostics.append(&mut body_diags);
                     let subtree_end = reader.buffer_position() as u32;
+                    // B27: a top-level <selectKey> inside a <sql> fragment
+                    // has nowhere valid to go (see reject_select_key_in_fragment).
+                    let segments = reject_select_key_in_fragment(segments, &mut diagnostics);
 
                     if let Some(mut fragment) = fragment {
                         fragment.span.end = subtree_end;
@@ -766,6 +769,45 @@ fn build_statement(
 /// dynamic tag (not a direct child -- not valid MyBatis/iBatis, but not
 /// rejected either) is out of scope here and keeps the previous
 /// passthrough behavior, same as any other unrecognized nested tag.
+/// B27 (cold code review, minor): `<selectKey>` only makes sense as a
+/// direct child of an `<insert>`/`<update>` statement (see
+/// [`extract_select_keys`], which splits it into its own synthesized
+/// `Statement` there) -- a `<sql>` fragment has no `MappedStatement` to
+/// attach a synthesized child to, so one appearing as a *top-level* child
+/// of `<sql>` used to just silently fall into the generic
+/// transparent-passthrough path (its body mashed straight into the
+/// fragment's own text). Strips any such child out entirely (dropped, not
+/// folded in -- there's nowhere valid for its contribution to go) and
+/// reports exactly why, distinct from A14's generic "unrecognized
+/// element" catch-all (which would otherwise still fire on it, since
+/// `selectKey` isn't a `<sql>`-body dynamic tag either) -- `selectKey` is
+/// a real, recognized tag, just invalid in *this* position, so this is a
+/// clearer message than "unrecognized".
+fn reject_select_key_in_fragment(
+    segments: Vec<BodySegment>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<BodySegment> {
+    segments
+        .into_iter()
+        .filter(|segment| {
+            if let BodySegment::DynamicTag { name, span } = segment {
+                if name == "selectKey" {
+                    diagnostics.push(Diagnostic {
+                        code: DiagCode::UnknownElement,
+                        span: Some(*span),
+                        message: "<selectKey> is not valid inside a <sql> fragment -- it \
+                                  only makes sense as a direct child of <insert>/<update>; \
+                                  ignored here (invalid placement)"
+                            .to_string(),
+                    });
+                    return false;
+                }
+            }
+            true
+        })
+        .collect()
+}
+
 fn extract_select_keys(
     source: &str,
     dialect: Dialect,
@@ -2076,6 +2118,41 @@ mod tests {
         let parent = &mapper.statements[0];
         assert_eq!(parent.property_paths.len(), 1);
         assert_eq!(parent.property_paths[0].value, "id");
+    }
+
+    #[test]
+    fn b27_select_key_at_top_level_of_sql_fragment_is_diagnosed_and_dropped() {
+        // Cold code review B27: <selectKey> only makes sense as a direct
+        // child of <insert>/<update> (see A6) -- a <sql> fragment has no
+        // MappedStatement to synthesize a child onto, so it used to just
+        // silently mash the selectKey's body into the fragment's own SQL
+        // text. Must now be dropped entirely (not folded in) with a
+        // diagnostic naming the actual problem (invalid placement), not
+        // A14's generic "unrecognized element" message.
+        let source = r#"<mapper namespace="x">
+            <sql id="frag"><selectKey keyProperty="id" resultType="long">SELECT 1</selectKey>a = 1</sql>
+            <select id="s"><include refid="frag"/></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        let mapper = result.mapper.expect("mapper root");
+        let fragment_vs = variants(&mapper.fragments[0].sql);
+        assert_eq!(
+            fragment_vs[0].text.text, "a = 1",
+            "the selectKey body must be dropped, not mashed into the fragment text"
+        );
+        let unknown: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::UnknownElement)
+            .collect();
+        assert_eq!(
+            unknown.len(),
+            1,
+            "exactly one diagnostic, not A14's generic one too"
+        );
+        assert!(unknown[0]
+            .message
+            .contains("not valid inside a <sql> fragment"));
     }
 
     #[test]
