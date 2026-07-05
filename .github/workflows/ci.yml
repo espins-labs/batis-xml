@@ -60,11 +60,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-semver-checks
       - uses: Swatinem/rust-cache@v2
-      # No baseline exists on crates.io yet (pre-first-publish) -- this is
-      # expected to fail with "no crate found" until 0.1.0 is published.
-      # Remove continue-on-error at that point.
+      # Baseline: batis-xml 0.1.0 on crates.io (published 2026-07-05).
       - run: cargo semver-checks
-        continue-on-error: true
 
   msrv:
     runs-on: ubuntu-latest
