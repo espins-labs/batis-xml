@@ -631,7 +631,17 @@ fn expand_trim(source: &str, span: ByteSpan, ctx: &mut Ctx) -> Result<Vec<Alt>, 
                 Vec::new()
             } else {
                 let lead_strip = leading_override_strip_len(&inner_sql.text, &prefix_overrides);
-                let trail_strip = trailing_override_strip_len(&inner_sql.text, &suffix_overrides);
+                // A9 (cold code review, publication blocker): lead_strip
+                // and trail_strip are each computed independently against
+                // the *same* original body text, so a body where both a
+                // prefixOverrides and a suffixOverrides alternative match
+                // can have them jointly exceed the text's length --
+                // `<trim prefixOverrides="AB" suffixOverrides="BC">ABC</trim>`:
+                // lead_strip=2, trail_strip=2, sum=4 > len=3. Clamp the
+                // same way B17 already does for <set>'s leading/trailing
+                // comma strips.
+                let trail_strip = trailing_override_strip_len(&inner_sql.text, &suffix_overrides)
+                    .min(inner_sql.text.len() - lead_strip);
                 let with_lead =
                     with_prefix(source, inner_sql, span.start, lead_strip, &prefix_with_sep);
                 let trimmed = with_suffix_strip(with_lead, trail_strip);
@@ -1090,6 +1100,13 @@ fn with_suffix(sql: SqlString, wrapper_start: u32, suffix: &str) -> SqlString {
 /// Strips `strip_n` trailing bytes from `sql.text`, dropping any span_map
 /// entries that would now point past the end of the (shortened) text.
 fn with_suffix_strip(sql: SqlString, strip_n: usize) -> SqlString {
+    // A9 (cold code review): defense-in-depth. Every current caller clamps
+    // its own leading/trailing strip lengths so they never jointly exceed
+    // the body text's length, but that clamping lives at each call site --
+    // clamp here too so a future caller that forgets can't reintroduce a
+    // subtract-overflow panic (debug) / out-of-bounds slice panic
+    // (release) from `strip_n > sql.text.len()`.
+    let strip_n = strip_n.min(sql.text.len());
     if strip_n == 0 {
         return sql;
     }

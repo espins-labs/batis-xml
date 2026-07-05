@@ -2988,6 +2988,45 @@ mod tests {
     }
 
     #[test]
+    fn a9_trim_override_overlap_does_not_panic() {
+        // Cold code review A9 (publication blocker): lead_strip and
+        // trail_strip are each computed independently against the *same*
+        // original body text ("ABC"), and here both match their full
+        // override length (2 bytes each) against a 3-byte body -- their
+        // sum (4) exceeds the text length (3), which used to panic
+        // (subtract-overflow in debug, OOB slice in release) inside
+        // with_suffix_strip. Must return normally now.
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefixOverrides="AB" suffixOverrides="BC">ABC</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+    }
+
+    #[test]
+    fn a9_trim_override_overlap_where_both_overrides_match_the_entire_body() {
+        // Same class, more extreme: both overrides equal the whole body,
+        // so a naive lead_strip + trail_strip would be double the text's
+        // length.
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefixOverrides="ABC" suffixOverrides="ABC">ABC</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+    }
+
+    #[test]
+    fn a9_trim_override_overlap_with_prefix_attribute_does_not_panic() {
+        // Same overlap, but with a `prefix` attribute too (exercises the
+        // with_prefix path with a non-empty prefix, not just strip_n > 0).
+        let source = r#"<mapper namespace="x">
+            <select id="a"><trim prefix="X" prefixOverrides="AB" suffixOverrides="BC">ABC</trim></select>
+        </mapper>"#;
+        let result = parse_str(source);
+        assert!(result.mapper.is_some());
+    }
+
+    #[test]
     fn b21_trim_leading_strip_over_entity_decoded_text_does_not_fabricate_offset() {
         // Cold code review B21: with_prefix's strip-length extrapolation
         // assumed 1 decoded byte == 1 raw byte, which is false once entity

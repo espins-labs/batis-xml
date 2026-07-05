@@ -92,6 +92,27 @@ fn where_set_trim_wrap(body: String) -> impl Strategy<Value = String> {
     ]
 }
 
+/// A9 (cold code review, publication blocker): a short body plus
+/// `prefixOverrides`/`suffixOverrides` alternatives picked so they can
+/// jointly cover more of the body than its own length -- the exact shape
+/// that caused a subtract-overflow panic (`<trim prefixOverrides="AB"
+/// suffixOverrides="BC">ABC</trim>`: both match 2 of the body's 3 bytes,
+/// summing to 4). `where_set_trim_wrap`'s override lists only ever strip
+/// from one side of a longer generated body, so this is a distinct case
+/// that generator never reached.
+fn overlapping_trim_overrides() -> impl Strategy<Value = String> {
+    prop::sample::select(vec![
+        ("AB", "BC", "ABC"),
+        ("ABC", "ABC", "ABC"),
+        ("A", "A", "A"),
+        ("XY", "YZ", "XYZ"),
+        ("AND ", "ND ", "AND "),
+    ])
+    .prop_map(|(pre, suf, body)| {
+        format!(r#"<trim prefixOverrides="{pre}" suffixOverrides="{suf}">{body}</trim>"#)
+    })
+}
+
 /// Recursively builds a MyBatis-flavored dynamic-tag fragment, up to
 /// `max_depth` levels of `<if>`/`<choose>`/`<where>`/`<set>`/`<trim>`
 /// nesting. `max_depth == 0` only produces leaf text (the recursion floor).
@@ -119,6 +140,7 @@ fn mybatis_dynamic(max_depth: u32) -> BoxedStrategy<String> {
             }
         ),
         1 => multibyte_edge_body().prop_flat_map(where_set_trim_wrap),
+        1 => overlapping_trim_overrides(),
     ]
     .boxed()
 }
