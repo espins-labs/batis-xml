@@ -12,6 +12,18 @@ From the first crates.io release onward, entries below this stub are
 maintained by `release-plz` (see `release-plz.toml`) from conventional
 commit messages, not hand-written.
 
+## [0.1.1](https://github.com/espins-labs/batis-xml/compare/v0.1.0...v0.1.1) - 2026-07-11
+
+### Fixed
+
+- replace depth-guarded recursion with heap worklists (small-stack overflow) ([#2](https://github.com/espins-labs/batis-xml/pull/2))
+
+### Other
+
+- *(package)* exclude private-corpus scratch harnesses from the published crate
+- *(examples)* take the sqlMap subpath from IBATIS_SQLMAP_SUBPATH
+- *(readme)* add crates.io/docs.rs/npm/CI/license badges + docs.rs link; drop internal MM ids from Status
+
 ## [0.1.0] - Unreleased
 
 Initial release: MyBatis 3 and iBatis 2 mapper XML parsing, dynamic-SQL
