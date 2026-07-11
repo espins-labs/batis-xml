@@ -625,7 +625,6 @@ fn build_mapper(
                             &segments,
                             &mut result_map.mappings,
                             &mut diagnostics,
-                            0,
                         );
                         result_maps.push(result_map);
                     }
@@ -879,7 +878,8 @@ fn statement_kind(local_name: &[u8]) -> Option<StatementKind> {
 /// (not accidentally) skips without a diagnostic, at either statement level
 /// (a direct child of `<mapper>`/`<sqlMap>` that isn't a statement/`<sql>`/
 /// `<resultMap>`) or dynamic position (nested inside a statement/fragment
-/// body, reached via [`crate::flatten::expand_transparent`]'s catch-all).
+/// body, reached via `crate::flatten::BodyFrame::step`'s transparent/
+/// unknown-tag catch-all).
 ///
 /// Before this list existed, *every*
 /// unrecognized element silently vanished the same way, whether it was a
@@ -1331,20 +1331,129 @@ fn build_result_map(
 /// same `Vec`, matching the model (`ColumnMapping` has no nested-structure
 /// field).
 ///
-/// Depth-limited (see [`crate::flatten::DEPTH_LIMIT`]): `depth` is the
-/// nesting level of this call (0 at the top), incremented on every
-/// `association`/`collection`/`discriminator`-`case` recursion. Pathologically
-/// deep nesting would otherwise reach that deep in the Rust call stack
-/// before there's any other way to detect it -- a stack overflow aborts
-/// the process (uncatchable). At the cap, the remaining subtree is
-/// skipped (no further mappings collected) with a diagnostic.
+/// **Stack-diet fix** (I3-equivalent, see `flatten.rs`'s own module-level
+/// doc comment for the general pattern and root-cause measurement this
+/// mirrors): nesting depth here used to cost one native Rust call-stack
+/// frame per `association`/`collection`/`discriminator`-`case` level, via
+/// this function calling itself. The 2026-07-11 scratch-probe diagnosis
+/// (`deep_assoc` fixture, superseded by `tests/small_stack_regression.rs`)
+/// measured a 256 KiB thread stack overflowing well
+/// under [`crate::flatten::DEPTH_LIMIT`] (256) levels of nesting in both
+/// debug and release. This is now a heap worklist ([`MFrame`]/
+/// [`MappingFrame`]/[`DiscriminatorFrame`], driven by this function's own
+/// `while` loop) instead: nesting depth costs one frame on `stack`'s heap
+/// allocation, not one call-stack frame. Simpler than `flatten.rs`'s own
+/// engines: `mappings`/`diagnostics` are shared `&mut Vec`s appended to
+/// directly as they're found (not a per-level return value threaded back
+/// up), so there is no `Completed`/`deliver` step here at all -- a finished
+/// frame is just popped and forgotten, and [`MAdvance::Push`]/[`Continue`]/
+/// [`Finished`] is the entire vocabulary needed.
+///
+/// [`DiscriminatorFrame`] is a separate frame kind from [`MappingFrame`] for
+/// the same reason `flatten.rs`'s `ChooseFrame` is separate from
+/// `BodyFrame`: a `<discriminator>`'s own children scan is not itself a
+/// nesting-depth-consuming "collect_mappings call" (only each `<case>`
+/// child's own body is, at the discriminator's own inherited depth + 1, the
+/// same basis `association`/`collection` use, not + 2) -- see
+/// [`descend_mapping`]'s own doc comment.
 fn collect_mappings(
     source: &str,
     segments: &[BodySegment],
     mappings: &mut Vec<ColumnMapping>,
     diagnostics: &mut Vec<Diagnostic>,
-    depth: u32,
 ) {
+    let Some(frame) = descend_mapping(segments.to_vec(), 0, diagnostics) else {
+        return;
+    };
+    let mut stack: Vec<MFrame> = vec![frame];
+    while let Some(top) = stack.last_mut() {
+        match top.step(source, mappings, diagnostics) {
+            MAdvance::Push(frame) => stack.push(frame),
+            MAdvance::Continue => {}
+            MAdvance::Finished => {
+                stack.pop();
+            }
+        }
+    }
+}
+
+/// One in-progress `<id>`/`<result>`/`<association>`/`<collection>`/
+/// `<discriminator>` scan of a resultMap-body-shaped segment list -- what
+/// used to be one activation record of `collect_mappings` itself, now
+/// suspended on `collect_mappings`'s own `stack` instead of the real call
+/// stack. Owns `segments` (not borrowed): each level's own body comes from
+/// an independent `capture_subtree` call over `source` (see
+/// [`BodySegment`]/[`crate::parse::TextSegment`]'s own doc comment for why
+/// that's already fully owned, no lifetime tied to `source`), so there is
+/// nothing to borrow from a parent frame in the first place.
+struct MappingFrame {
+    segments: Vec<BodySegment>,
+    idx: usize,
+    /// This frame's own nesting depth (0 at the top) -- see
+    /// [`descend_mapping`]'s own doc comment for how it's derived.
+    depth: u32,
+}
+
+/// One in-progress `<discriminator>` children scan -- what used to be
+/// `collect_mappings`'s own `"discriminator"` arm's `for case in &inner`
+/// loop. See this module's own `collect_mappings` doc comment for why this
+/// is a separate frame kind from [`MappingFrame`].
+struct DiscriminatorFrame {
+    children: Vec<BodySegment>,
+    idx: usize,
+    /// The discriminator's own depth, inherited from whichever
+    /// [`MappingFrame`] found it (not itself depth-incremented) -- each
+    /// matching `<case>` recurses at `depth + 1`.
+    depth: u32,
+}
+
+enum MFrame {
+    Mapping(MappingFrame),
+    Discriminator(DiscriminatorFrame),
+}
+
+/// [`MFrame::step`]'s own result -- "advance in place / descend / return",
+/// the same shape [`crate::flatten`]'s own engines use (see that module's
+/// doc comment), simplified: no `Completed`/`deliver` here since nothing is
+/// ever threaded back to a parent frame (see `collect_mappings`'s own doc
+/// comment).
+enum MAdvance {
+    Push(MFrame),
+    Continue,
+    Finished,
+}
+
+impl MFrame {
+    fn step(
+        &mut self,
+        source: &str,
+        mappings: &mut Vec<ColumnMapping>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> MAdvance {
+        match self {
+            MFrame::Mapping(m) => m.step(source, mappings, diagnostics),
+            MFrame::Discriminator(d) => d.step(source, diagnostics),
+        }
+    }
+}
+
+/// Depth-checked equivalent of calling `collect_mappings` recursively --
+/// the single choke point every [`MappingFrame`]/[`DiscriminatorFrame`]
+/// descent into a nested segment list goes through, so
+/// [`crate::flatten::DEPTH_LIMIT`] is enforced uniformly. Mirrors the
+/// original function's own "check at entry, before touching any segment"
+/// order exactly (unlike `flatten.rs`'s `descend_body`/`descend_union`,
+/// which check-then-increment in a separate wrapper -- this crate's
+/// `collect_mappings` always checked its own `depth` parameter at its own
+/// entry, so there's no separate wrapper/inner split to preserve here).
+/// `None` means the cap was already reached: the original early return
+/// (diagnose, walk nothing) -- no frame is pushed for it, matching that no
+/// recursive call happened either.
+fn descend_mapping(
+    segments: Vec<BodySegment>,
+    depth: u32,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<MFrame> {
     if depth >= crate::flatten::DEPTH_LIMIT {
         diagnostics.push(Diagnostic {
             code: DiagCode::NestingLimitExceeded,
@@ -1354,13 +1463,33 @@ fn collect_mappings(
                 crate::flatten::DEPTH_LIMIT
             ),
         });
-        return;
+        return None;
     }
+    Some(MFrame::Mapping(MappingFrame {
+        segments,
+        idx: 0,
+        depth,
+    }))
+}
 
-    for segment in segments {
-        let BodySegment::DynamicTag { name, span } = segment else {
-            continue; // whitespace between child elements
+impl MappingFrame {
+    fn step(
+        &mut self,
+        source: &str,
+        mappings: &mut Vec<ColumnMapping>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> MAdvance {
+        let Some(seg) = self.segments.get(self.idx) else {
+            return MAdvance::Finished;
         };
+        let BodySegment::DynamicTag { name, span } = seg else {
+            self.idx += 1; // whitespace between child elements
+            return MAdvance::Continue;
+        };
+        let name = name.clone();
+        let span = *span;
+        let depth = self.depth;
+        self.idx += 1;
 
         match name.as_str() {
             "id" | "result" => {
@@ -1374,30 +1503,54 @@ fn collect_mappings(
                     column: column.map(|c| c.value),
                     property: property.map(|p| p.value),
                 });
+                MAdvance::Continue
             }
             "association" | "collection" => {
-                let (inner, mut d, _truncated) = capture_subtree(source, *span);
+                let (inner, mut d, _truncated) = capture_subtree(source, span);
                 diagnostics.append(&mut d);
-                collect_mappings(source, &inner, mappings, diagnostics, depth + 1);
-            }
-            "discriminator" => {
-                let (inner, mut d, _truncated) = capture_subtree(source, *span);
-                diagnostics.append(&mut d);
-                for case in &inner {
-                    if let BodySegment::DynamicTag {
-                        name: case_name,
-                        span: case_span,
-                    } = case
-                    {
-                        if case_name == "case" {
-                            let (case_inner, mut cd, _t) = capture_subtree(source, *case_span);
-                            diagnostics.append(&mut cd);
-                            collect_mappings(source, &case_inner, mappings, diagnostics, depth + 1);
-                        }
-                    }
+                match descend_mapping(inner, depth + 1, diagnostics) {
+                    Some(frame) => MAdvance::Push(frame),
+                    None => MAdvance::Continue,
                 }
             }
-            _ => {}
+            "discriminator" => {
+                let (inner, mut d, _truncated) = capture_subtree(source, span);
+                diagnostics.append(&mut d);
+                MAdvance::Push(MFrame::Discriminator(DiscriminatorFrame {
+                    children: inner,
+                    idx: 0,
+                    depth,
+                }))
+            }
+            _ => MAdvance::Continue,
+        }
+    }
+}
+
+impl DiscriminatorFrame {
+    fn step(&mut self, source: &str, diagnostics: &mut Vec<Diagnostic>) -> MAdvance {
+        loop {
+            let Some(child) = self.children.get(self.idx) else {
+                return MAdvance::Finished;
+            };
+            self.idx += 1;
+            let BodySegment::DynamicTag {
+                name: case_name,
+                span: case_span,
+            } = child
+            else {
+                continue;
+            };
+            if case_name == "case" {
+                let case_span = *case_span;
+                let depth = self.depth;
+                let (case_inner, mut cd, _t) = capture_subtree(source, case_span);
+                diagnostics.append(&mut cd);
+                return match descend_mapping(case_inner, depth + 1, diagnostics) {
+                    Some(frame) => MAdvance::Push(frame),
+                    None => MAdvance::Continue,
+                };
+            }
         }
     }
 }
@@ -1701,6 +1854,17 @@ fn recovery_diagnostic(err: &quick_xml::Error, pos: u64) -> Diagnostic {
 /// came from. Per invariant 4, `raw_span` slices back to the *original*
 /// bytes (entities/CDATA markers unresolved); `decoded` is the resolved
 /// value. The two coincide only when the segment has no entities.
+///
+/// `Clone` (I3-equivalent stack-diet fix): `flatten::flatten_body`'s
+/// heap-worklist engine (see that module's own doc comment) owns a fresh
+/// `Vec<BodySegment>` per suspended frame rather than borrowing into a
+/// parent's — cloning the flattener's own top-level `segments` slice once
+/// per `flatten_body` call (cheap: just that statement/fragment's own
+/// direct children, not the whole nested tree, since each dynamic tag's own
+/// body is re-read from `source` via `capture_subtree` independently at
+/// every level anyway) is what makes that possible without lifetime-tying
+/// every frame to its parent's now-immovable stack slot.
+#[derive(Clone)]
 pub(crate) struct TextSegment {
     pub(crate) decoded: String,
     pub(crate) raw_span: ByteSpan,
@@ -1710,6 +1874,8 @@ pub(crate) struct TextSegment {
 /// (`<if>`, `<choose>`, iBatis `<isNotEmpty>`, ...) are recorded as opaque
 /// markers — MM-06 will re-walk their span to flatten branches; MM-08 only
 /// needs to not let them break text-segment ordering or span accounting.
+/// `Clone`: see [`TextSegment`]'s own doc comment.
+#[derive(Clone)]
 pub(crate) enum BodySegment {
     Text(TextSegment),
     DynamicTag { name: String, span: ByteSpan },
