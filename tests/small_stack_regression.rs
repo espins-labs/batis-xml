@@ -69,7 +69,17 @@ const VALID_DEPTH: usize = DEPTH_LIMIT - 1;
 /// 256 KiB, where pre-fix release happens to survive (only pre-fix debug
 /// overflows there), which would make a 256 KiB budget discriminate
 /// pre/post-fix in debug only.
+#[cfg(not(windows))]
 const SMALL_STACK_BYTES: usize = 64 * 1024;
+/// Windows exception: 64 KiB is below MSVC debug's *fixed* cost of merely
+/// entering the parse pipeline on a fresh thread (fatter debug frames +
+/// thread startup overhead) -- the depth-independent floor, not the
+/// per-level growth this test pins, overflowed on windows-latest CI at
+/// 64 KiB. 128 KiB clears that floor while still discriminating
+/// pre/post-fix in debug (pre-fix debug needed >1 MiB); release
+/// discrimination is retained by the Unix budget above.
+#[cfg(windows)]
+const SMALL_STACK_BYTES: usize = 128 * 1024;
 
 /// One deeply-nested fixture: `name` for failure messages, `source` the
 /// mapper XML, `expects_nesting_diag` whether a `NestingLimitExceeded`
